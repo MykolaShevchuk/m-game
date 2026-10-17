@@ -21,6 +21,7 @@ public/assets/        Static files (sprites, sounds), served at /assets/...
 src/
   main.ts             Entry point: creates Game, opens the first scene
   config.ts           All tunable numbers and colors in one place
+  characters.ts       Playable characters: stats and perks
   core/
     Game.ts           Canvas setup + fixed-timestep game loop
     Camera.ts         Smooth follow camera, clamped to the world
@@ -32,7 +33,7 @@ src/
     Entity.ts         Base class: position, size, alive flag
     Player.ts / Enemy.ts / Coin.ts
   scenes/
-    MenuScene.ts      Title screen
+    CharacterSelectScene.ts  Title + pick Scout, Knight or Mage
     PlayScene.ts      Gameplay: spawning, collisions, score
     GameOverScene.ts  Result + restart
   world/
@@ -40,6 +41,7 @@ src/
     WorldMap.ts       Island generation, terrain colors, hillshade, trees/rocks, walkability
   ui/
     text.ts           Canvas text helper
+    drawCharacter.ts  Procedural character art (used in select screen and in game)
     minimap.ts        Overview map with camera frame, player and coins
 ```
 
