@@ -22,7 +22,7 @@ src/
   main.ts             Entry point: creates Game, opens the first scene
   config.ts           All tunable numbers and colors in one place
   characters.ts       Playable characters: stats and perks
-  upgrades.ts         Level-up upgrades offered every CONFIG.upgradeEvery points
+  upgrades.ts         Per-character upgrade pools offered every CONFIG.upgradeEvery points
   core/
     Game.ts           Canvas setup + fixed-timestep game loop
     Camera.ts         Smooth follow camera, clamped to the world

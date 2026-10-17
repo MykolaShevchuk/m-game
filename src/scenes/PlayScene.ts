@@ -6,6 +6,7 @@ import { overlaps } from '@/core/math';
 import type { Scene } from '@/core/Scene';
 import { Coin } from '@/entities/Coin';
 import { Enemy } from '@/entities/Enemy';
+import { Fireball } from '@/entities/Fireball';
 import { Player } from '@/entities/Player';
 import { drawMinimap } from '@/ui/minimap';
 import { drawText } from '@/ui/text';
@@ -15,6 +16,7 @@ import { WorldMap } from '@/world/WorldMap';
 import { GameOverScene } from './GameOverScene';
 
 const MAGNET_SPEED = 320;
+const FIREBALL_RANGE = 320;
 
 export class PlayScene implements Scene {
   private map: WorldMap;
@@ -29,6 +31,8 @@ export class PlayScene implements Scene {
   private nextUpgradeAt = CONFIG.upgradeEvery;
   private picker: UpgradePicker | null = null;
   private upgradesTaken: Upgrade[] = [];
+  private fireballs: Fireball[] = [];
+  private fireballTimer = 0;
 
   constructor(
     private game: Game,
@@ -80,11 +84,52 @@ export class PlayScene implements Scene {
     this.refillCoins();
     this.checkUpgrade();
 
-    if (!this.player.isInvulnerable && this.enemies.some((e) => overlaps(this.player, e))) {
-      if (this.player.hit()) {
+    this.updateFireballs(dt);
+
+    for (const enemy of this.enemies) {
+      if (!overlaps(this.player, enemy)) continue;
+      if (this.player.isInvulnerable) {
+        if (this.player.shieldBash) enemy.alive = false;
+      } else if (this.player.hit()) {
         this.game.scenes.switch(new GameOverScene(this.game, this.score, this.characterIndex));
+        return;
       }
     }
+    this.enemies = this.enemies.filter((e) => e.alive);
+  }
+
+  private updateFireballs(dt: number) {
+    const every = this.player.fireballEvery;
+    if (every > 0) {
+      this.fireballTimer += dt;
+      if (this.fireballTimer >= every) {
+        const px = this.player.x + this.player.w / 2;
+        const py = this.player.y + this.player.h / 2;
+        let target: Enemy | null = null;
+        let best = FIREBALL_RANGE;
+        for (const e of this.enemies) {
+          const d = Math.hypot(e.x + e.w / 2 - px, e.y + e.h / 2 - py);
+          if (d < best) {
+            best = d;
+            target = e;
+          }
+        }
+        if (target) {
+          this.fireballTimer = 0;
+          this.fireballs.push(new Fireball(px, py, target.x + target.w / 2, target.y + target.h / 2));
+        }
+      }
+    }
+
+    for (const f of this.fireballs) {
+      f.update(dt);
+      const hit = this.enemies.find((e) => e.alive && overlaps(f, e));
+      if (hit) {
+        hit.alive = false;
+        f.alive = false;
+      }
+    }
+    this.fireballs = this.fireballs.filter((f) => f.alive);
   }
 
   // Called again after each pick so several thresholds crossed at once each grant an upgrade.
@@ -148,6 +193,7 @@ export class PlayScene implements Scene {
     this.coins.forEach((c) => c.render(ctx));
     this.enemies.forEach((e) => e.render(ctx));
     this.player.render(ctx);
+    this.fireballs.forEach((f) => f.render(ctx));
     ctx.restore();
 
     drawMinimap(ctx, this.map, this.camera, this.player, this.coins);
@@ -179,5 +225,11 @@ export class PlayScene implements Scene {
       ctx.textAlign = 'center';
       ctx.fillText(u.icon, 26 + i * 22, 96);
     });
+
+    const p = this.player;
+    if (p.blinkRange > 0) {
+      const status = p.blinkTimer > 0 ? `${p.blinkTimer.toFixed(1)}s` : 'ready (Space)';
+      drawText(ctx, `Blink: ${status}`, 16, 120, 14);
+    }
   }
 }
