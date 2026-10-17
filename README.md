@@ -32,7 +32,7 @@ src/
     storage.ts        High score in localStorage
   entities/
     Entity.ts         Base class: position, size, alive flag
-    Player.ts / Enemy.ts / Coin.ts
+    Player.ts / Coin.ts
   scenes/
     CharacterSelectScene.ts  Title + pick Alien, Knight or Wizard
     PlayScene.ts      Gameplay: spawning, collisions, score
