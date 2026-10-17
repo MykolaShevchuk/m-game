@@ -2,11 +2,15 @@ import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
 import { Camera } from '@/core/Camera';
 import type { Game } from '@/core/Game';
-import { overlaps } from '@/core/math';
+import { overlaps, type Rect } from '@/core/math';
 import type { Scene } from '@/core/Scene';
 import { Coin } from '@/entities/Coin';
 import { Player } from '@/entities/Player';
+import { Resource } from '@/entities/Resource';
+import { emptyInventory, RESOURCE_BY_ID, rollResource } from '@/resources';
+import { drawInventory } from '@/ui/inventory';
 import { drawMinimap } from '@/ui/minimap';
+import { Popups } from '@/ui/popups';
 import { drawText } from '@/ui/text';
 import { UpgradePicker } from '@/ui/UpgradePicker';
 import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
@@ -20,6 +24,9 @@ export class PlayScene implements Scene {
   private camera: Camera;
   private player: Player;
   private coins: Coin[] = [];
+  private resources: Resource[] = [];
+  private inventory = emptyInventory();
+  private popups = new Popups();
   private score = 0;
   private paused = false;
   private mods: RunModifiers = { coinValue: 1, enemySpeed: 1 };
@@ -41,6 +48,7 @@ export class PlayScene implements Scene {
     this.camera = new Camera(game.width, game.height, this.map.width, this.map.height);
     this.camera.follow(this.player, Infinity);
     this.refillCoins();
+    this.refillResources();
   }
 
   update(dt: number) {
@@ -60,8 +68,11 @@ export class PlayScene implements Scene {
 
     this.player.update(dt);
     this.coins.forEach((c) => c.update(dt));
+    this.resources.forEach((r) => r.update(dt));
+    this.popups.update(dt);
     this.camera.follow(this.player, dt);
-    this.pullCoins(dt);
+    this.pull(this.coins, dt);
+    this.pull(this.resources, dt);
     this.trackIsland(dt);
 
     for (const coin of this.coins) {
@@ -72,6 +83,7 @@ export class PlayScene implements Scene {
     }
     this.coins = this.coins.filter((c) => c.alive);
     this.refillCoins();
+    this.collectResources();
     this.checkUpgrade();
   }
 
@@ -96,19 +108,19 @@ export class PlayScene implements Scene {
     this.picker = new UpgradePicker(options);
   }
 
-  private pullCoins(dt: number) {
+  private pull(items: Rect[], dt: number) {
     const radius = this.player.magnet;
     if (!radius) return;
     const px = this.player.x + this.player.w / 2;
     const py = this.player.y + this.player.h / 2;
-    for (const coin of this.coins) {
-      const dx = px - (coin.x + coin.w / 2);
-      const dy = py - (coin.y + coin.h / 2);
+    for (const item of items) {
+      const dx = px - (item.x + item.w / 2);
+      const dy = py - (item.y + item.h / 2);
       const dist = Math.hypot(dx, dy);
       if (dist > 0 && dist < radius) {
         const step = Math.min(dist, MAGNET_SPEED * dt);
-        coin.x += (dx / dist) * step;
-        coin.y += (dy / dist) * step;
+        item.x += (dx / dist) * step;
+        item.y += (dy / dist) * step;
       }
     }
   }
@@ -121,6 +133,42 @@ export class PlayScene implements Scene {
     }
   }
 
+  private collectResources() {
+    for (const r of this.resources) {
+      if (!overlaps(this.player, r)) continue;
+      r.alive = false;
+      this.inventory[r.type]++;
+      const def = RESOURCE_BY_ID[r.type];
+      this.popups.add(`+1 ${def.name}`, def.color, r.x + r.w / 2, r.y - 4);
+    }
+    this.resources = this.resources.filter((r) => r.alive);
+    this.refillResources();
+  }
+
+  /** Tops up the island with the fewest pickups, so small islands get as many as big ones. */
+  private refillResources() {
+    if (this.resources.length >= CONFIG.resource.count) return;
+    const size = CONFIG.resource.size;
+    const islandOf = (x: number, y: number) => this.map.islandAt(x + size / 2, y + size / 2);
+    const perIsland = this.map.islands.map(() => 0);
+    for (const r of this.resources) {
+      const i = islandOf(r.x, r.y);
+      if (i >= 0) perIsland[i]++;
+    }
+    while (this.resources.length < CONFIG.resource.count) {
+      const fewest = Math.min(...perIsland);
+      if (fewest === Infinity) break;
+      const island = perIsland.indexOf(fewest);
+      const p = this.map.randomWalkablePoint(size, (x, y) => islandOf(x, y) === island);
+      if (!p) {
+        perIsland[island] = Infinity;
+        continue;
+      }
+      perIsland[island]++;
+      this.resources.push(new Resource(p.x, p.y, rollResource(this.map.islands[island].theme.name)));
+    }
+  }
+
   render(ctx: CanvasRenderingContext2D) {
     const cx = Math.round(this.camera.x);
     const cy = Math.round(this.camera.y);
@@ -130,13 +178,16 @@ export class PlayScene implements Scene {
 
     ctx.save();
     ctx.translate(-cx, -cy);
+    this.resources.forEach((r) => r.render(ctx));
     this.coins.forEach((c) => c.render(ctx));
     this.player.render(ctx);
+    this.popups.render(ctx);
     ctx.restore();
 
     drawMinimap(ctx, this.map, this.camera, this.player, this.coins);
     this.renderHud(ctx);
     this.renderIslandInfo(ctx);
+    drawInventory(ctx, this.inventory);
     if (this.picker) {
       this.picker.render(ctx, w, h);
     } else if (this.paused) {
