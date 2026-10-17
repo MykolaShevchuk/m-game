@@ -2,16 +2,35 @@
 
 A simple browser game built with TypeScript, HTML5 Canvas and Vite. No game engine, no runtime dependencies.
 
+**Play online:** [https://mykolashevchuk.github.io/m-game/](https://mykolashevchuk.github.io/m-game/)  
+(Solo & local co-op. Online co-op needs `npm run server`.)
+
 ## Run
 
 ```bash
 npm install
-npm run dev       # dev server with hot reload
+npm run dev       # game client (Vite, LAN-exposed)
+npm run server    # multiplayer WebSocket server on :3001
+npm run dev:all   # client + server together
 npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build
 ```
 
-Controls: WASD / arrow keys to move, P / Esc to pause, Enter to start, C while paused to change character, B to build (1-5 to choose a house, Enter to place). The chosen character is remembered, so the select screen only appears on first launch.
+### Play on a phone (same Wi‑Fi)
+
+1. Run `npm run dev` (and `npm run server` if you want Online Co-op).
+2. On your phone’s browser, open the **Network** URL Vite prints, e.g. `http://192.168.x.x:5173`.
+3. Touch: virtual stick + F / B / BL; tap menus. Online co-op uses the same host IP for the WebSocket (port 3001).
+
+Start at the mode select: **Solo**, **Local Co-op** (split screen), or **Online Co-op** (room code).
+
+- Solo: WASD/arrows move, F interact, B build
+- Local co-op: P1 WASD + F/B · P2 arrows + M/K · separate inventories
+- Online: Host/Join via `npm run server`, then Enter to start
+- Mobile: virtual stick + F/B/BL buttons; tap menus to choose
+- After **2 full days** (day+night ×2), PvP unlocks in co-op: bump or F/M to strike; troops attack foes; last player standing wins
+
+P / Esc (or || on mobile) pauses.
 
 ## Structure
 
@@ -61,7 +80,7 @@ src/
 
 Each game generates a new archipelago of `CONFIG.world.islands` (10) islands from a random seed. Island centres are scattered with a minimum spacing; elevation is fractal noise shaped by a domain-warped falloff around each centre, so coastlines get bays and peninsulas. Every island gets a theme from `src/world/themes.ts` (Greenwood, Pine, Dune, Palm, Frost, Ember, Amber, Blossom, Mire, Mesa) with its own palette and tree style.
 
-Wooden bridges follow a minimum spanning tree over the island centres (plus two extra links), so every island is reachable. Coins only spawn on land connected to the start island. Terrain bands are set by `CONFIG.world.levels`: water and anything above `cliff` is impassable.
+Wooden bridges follow a minimum spanning tree over the island centres (plus two extra links), so every island is reachable. Coins only spawn on land connected to the start island. Water is impassable; all land, including peaks, is walkable.
 
 The world is too large for one canvas, so it is drawn in 512 px chunks rendered on demand and kept in a small LRU cache.
 

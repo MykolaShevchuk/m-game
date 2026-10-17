@@ -25,6 +25,7 @@ export function drawHouse(ctx: CanvasRenderingContext2D, def: BuildingDef, x: nu
   if (def.id === 'emberKeep') drawBattlements(ctx, x + 2, bodyY, w - 4, def.trim);
   if (def.id === 'cottage') drawChimney(ctx, x + w * 0.78, y + 4, def.wall, def.trim);
   if (def.id === 'crystalLodge') drawCrystals(ctx, x + w / 2, y + 6, def.trim);
+  if (def.id === 'barracks') drawBanner(ctx, x + w * 0.82, bodyY - 2, def.trim);
 
   ctx.fillStyle = def.roof;
   ctx.beginPath();
@@ -79,6 +80,22 @@ function drawCrystals(ctx: CanvasRenderingContext2D, x: number, y: number, color
   ctx.moveTo(x, y - 8);
   ctx.lineTo(x + 5, y + 2);
   ctx.lineTo(x - 5, y + 2);
+  ctx.closePath();
+  ctx.fill();
+}
+
+function drawBanner(ctx: CanvasRenderingContext2D, x: number, y: number, color: string) {
+  ctx.strokeStyle = '#4a3a28';
+  ctx.lineWidth = 2;
+  ctx.beginPath();
+  ctx.moveTo(x, y + 28);
+  ctx.lineTo(x, y - 14);
+  ctx.stroke();
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(x, y - 14);
+  ctx.lineTo(x + 14, y - 6);
+  ctx.lineTo(x, y + 2);
   ctx.closePath();
   ctx.fill();
 }

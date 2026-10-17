@@ -6,22 +6,33 @@ export class Game {
   readonly ctx: CanvasRenderingContext2D;
   readonly input: Input;
   readonly scenes: SceneManager;
-  readonly width = CONFIG.width;
-  readonly height = CONFIG.height;
+  width: number = CONFIG.width;
+  height: number = CONFIG.height;
 
   private lastTime = 0;
   private accumulator = 0;
   private running = false;
 
   constructor(readonly canvas: HTMLCanvasElement) {
-    canvas.width = this.width;
-    canvas.height = this.height;
     const ctx = canvas.getContext('2d');
     if (!ctx) throw new Error('2D context not supported');
     this.ctx = ctx;
-    this.input = new Input(window);
+    this.input = new Input(canvas);
     this.scenes = new SceneManager();
+    this.fitToWindow();
+    window.addEventListener('resize', this.fitToWindow);
   }
+
+  /** Match the canvas buffer to the browser window. */
+  readonly fitToWindow = () => {
+    const w = Math.max(1, Math.round(window.innerWidth));
+    const h = Math.max(1, Math.round(window.innerHeight));
+    if (w === this.width && h === this.height && this.canvas.width === w && this.canvas.height === h) return;
+    this.width = w;
+    this.height = h;
+    this.canvas.width = w;
+    this.canvas.height = h;
+  };
 
   start() {
     this.running = true;

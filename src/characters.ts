@@ -12,6 +12,16 @@ export interface CharacterDef {
   lives: number;
   /** Radius in px within which coins fly toward the player; 0 disables. */
   magnet: number;
+  combat: {
+    style: 'slash' | 'bolt';
+    cooldown: number;
+    range: number;
+    /** Half-angle of the melee arc, in radians. */
+    cone: number;
+    knockback: number;
+    lunge: number;
+    stun: number;
+  };
 }
 
 export const CHARACTERS: CharacterDef[] = [
@@ -26,6 +36,7 @@ export const CHARACTERS: CharacterDef[] = [
     size: 20,
     lives: 1,
     magnet: 0,
+    combat: { style: 'slash', cooldown: 0.28, range: 50, cone: 0.7, knockback: 26, lunge: 20, stun: 0 },
   },
   {
     id: 'knight',
@@ -38,6 +49,7 @@ export const CHARACTERS: CharacterDef[] = [
     size: 26,
     lives: 3,
     magnet: 0,
+    combat: { style: 'slash', cooldown: 0.55, range: 64, cone: 1.05, knockback: 46, lunge: 10, stun: 0.12 },
   },
   {
     id: 'wizard',
@@ -50,5 +62,6 @@ export const CHARACTERS: CharacterDef[] = [
     size: 22,
     lives: 1,
     magnet: 110,
+    combat: { style: 'bolt', cooldown: 0.65, range: 280, cone: 0.2, knockback: 34, lunge: 0, stun: 0.08 },
   },
 ];

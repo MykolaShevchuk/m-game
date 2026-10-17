@@ -3,6 +3,13 @@ import type { Camera } from '@/core/Camera';
 import type { Rect } from '@/core/math';
 import type { WorldMap } from '@/world/WorldMap';
 
+export interface MinimapLayout {
+  originX?: number;
+  viewW?: number;
+  width?: number;
+  players?: { rect: Rect; color: string }[];
+}
+
 export function drawMinimap(
   ctx: CanvasRenderingContext2D,
   map: WorldMap,
@@ -10,11 +17,14 @@ export function drawMinimap(
   player: Rect,
   coins: Rect[],
   houses: Rect[] = [],
+  layout: MinimapLayout = {},
 ) {
-  const w = CONFIG.minimap.width;
+  const originX = layout.originX ?? 0;
+  const viewW = layout.viewW ?? CONFIG.width;
+  const w = layout.width ?? Math.min(CONFIG.minimap.width, viewW - CONFIG.minimap.margin * 2);
   const scale = w / map.width;
   const h = map.height * scale;
-  const x = CONFIG.width - w - CONFIG.minimap.margin;
+  const x = originX + viewW - w - CONFIG.minimap.margin;
   const y = CONFIG.minimap.margin;
 
   ctx.save();
@@ -29,8 +39,17 @@ export function drawMinimap(
   ctx.fillStyle = CONFIG.colors.coin;
   for (const c of coins) ctx.fillRect(x + c.x * scale - 1, y + c.y * scale - 1, 2, 2);
   ctx.fillStyle = '#c4a574';
-  for (const h of houses) ctx.fillRect(x + h.x * scale - 1.5, y + h.y * scale - 1.5, 3, 3);
-  ctx.fillStyle = CONFIG.colors.player;
-  ctx.fillRect(x + player.x * scale - 2, y + player.y * scale - 2, 4, 4);
+  for (const house of houses) ctx.fillRect(x + house.x * scale - 1.5, y + house.y * scale - 1.5, 3, 3);
+
+  const extras = layout.players;
+  if (extras?.length) {
+    for (const p of extras) {
+      ctx.fillStyle = p.color;
+      ctx.fillRect(x + p.rect.x * scale - 2, y + p.rect.y * scale - 2, 4, 4);
+    }
+  } else {
+    ctx.fillStyle = CONFIG.colors.player;
+    ctx.fillRect(x + player.x * scale - 2, y + player.y * scale - 2, 4, 4);
+  }
   ctx.restore();
 }

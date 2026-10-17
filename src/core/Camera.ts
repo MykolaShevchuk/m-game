@@ -5,11 +5,18 @@ export class Camera {
   y = 0;
 
   constructor(
-    readonly viewW: number,
-    readonly viewH: number,
+    public viewW: number,
+    public viewH: number,
     private worldW: number,
     private worldH: number,
   ) {}
+
+  resize(viewW: number, viewH: number) {
+    this.viewW = viewW;
+    this.viewH = viewH;
+    this.x = clamp(this.x, 0, Math.max(0, this.worldW - this.viewW));
+    this.y = clamp(this.y, 0, Math.max(0, this.worldH - this.viewH));
+  }
 
   /** Smoothly centers on the target; pass dt = Infinity to snap. */
   follow(target: Rect, dt: number) {

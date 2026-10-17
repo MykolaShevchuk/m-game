@@ -6,7 +6,8 @@ import { THEMES, type IslandTheme, type RGB, type TreeStyle } from './themes';
 const { levels } = CONFIG.world;
 const CHUNK = CONFIG.world.chunk;
 const MAX_CACHED_CHUNKS = 48;
-const BRIDGE_HALF_WIDTH = 10;
+/** Deck half-width in px. Must exceed the largest character (Knight is 26). */
+const BRIDGE_HALF_WIDTH = 28;
 
 const WATER = {
   abyss: [16, 38, 72],
@@ -29,11 +30,13 @@ interface Bridge {
   by: number;
 }
 
+type PropKind = TreeStyle | 'rock' | 'bush' | 'flower' | 'reed' | 'pebble' | 'tuft' | 'coral' | 'crystal';
+
 interface Prop {
   x: number;
   y: number;
   size: number;
-  kind: TreeStyle | 'rock';
+  kind: PropKind;
   color: RGB;
   seed: number;
   snowy: boolean;
@@ -98,19 +101,39 @@ export class WorldMap {
 
   isWalkable(x: number, y: number) {
     const i = this.index(x, y);
-    if (i < 0) return false;
-    if (this.bridgeMask[i]) return true;
-    const e = this.elevation[i];
-    return e >= levels.shallow && e < levels.cliff;
+    return i >= 0 && this.cellWalkable(i);
   }
 
+  // Inset corners so a 1px overflow doesn't block, and a narrower test on bridges
+  // so the player can cross even when their sprite is wider than the water gap.
   isAreaWalkable(r: Rect) {
+    const cx = r.x + r.w / 2;
+    const cy = r.y + r.h / 2;
+    const mid = this.index(cx, cy);
+    if (mid >= 0 && this.bridgeMask[mid]) {
+      const inset = 4;
+      return (
+        this.isWalkable(cx, cy) &&
+        this.isWalkable(cx - inset, cy) &&
+        this.isWalkable(cx + inset, cy) &&
+        this.isWalkable(cx, cy - inset) &&
+        this.isWalkable(cx, cy + inset)
+      );
+    }
+    const x1 = r.x + Math.max(0, r.w - 1);
+    const y1 = r.y + Math.max(0, r.h - 1);
     return (
       this.isWalkable(r.x, r.y) &&
-      this.isWalkable(r.x + r.w, r.y) &&
-      this.isWalkable(r.x, r.y + r.h) &&
-      this.isWalkable(r.x + r.w, r.y + r.h)
+      this.isWalkable(x1, r.y) &&
+      this.isWalkable(r.x, y1) &&
+      this.isWalkable(x1, y1) &&
+      this.isWalkable(cx, cy)
     );
+  }
+
+  private cellWalkable(i: number) {
+    if (this.bridgeMask[i]) return true;
+    return this.elevation[i] >= levels.shallow;
   }
 
   /** Index of the island under (x, y), or -1 for water and bridges. */
@@ -249,11 +272,7 @@ export class WorldMap {
     const { cols, rows } = this;
     const stack = [first];
     this.reachable[first] = 1;
-    const walkable = (i: number) => {
-      if (this.bridgeMask[i]) return true;
-      const e = this.elevation[i];
-      return e >= levels.shallow && e < levels.cliff;
-    };
+    const walkable = (i: number) => this.cellWalkable(i);
     while (stack.length) {
       const i = stack.pop()!;
       const c = i % cols;
@@ -274,7 +293,10 @@ export class WorldMap {
     const uy = (b.y - a.y) / len;
     const step = this.cell / 2;
     for (let t = 0; t <= len; t += step) {
-      for (let o = -BRIDGE_HALF_WIDTH; o <= BRIDGE_HALF_WIDTH; o += step) {
+      // Flare the ends so the mouth is easy to walk onto from any approach angle.
+      const shore = Math.min(t, len - t);
+      const half = BRIDGE_HALF_WIDTH + (shore < 40 ? (40 - shore) * 0.4 : 0);
+      for (let o = -half; o <= half; o += step) {
         const i = this.index(a.x + ux * t - uy * o, a.y + uy * t + ux * o);
         if (i >= 0 && this.elevation[i] < levels.shallow) this.bridgeMask[i] = 1;
       }
@@ -287,16 +309,30 @@ export class WorldMap {
     return owner >= 0 ? this.islands[owner].theme : THEMES[0];
   }
 
-  private colorAt(e: number, m: number, t: IslandTheme): RGB {
-    if (e < levels.deep) return mix(WATER.abyss, WATER.deep, band(e, 0.1, levels.deep));
-    if (e < levels.shallow) return mix(WATER.deep, WATER.shallow, band(e, levels.deep, levels.shallow));
-    if (e < levels.beach) return t.sand;
-    if (e < levels.rock) {
-      const vegetation = m < 0.45 ? mix(t.dry, t.grass, band(m, 0.3, 0.45)) : mix(t.grass, t.forest, band(m, 0.45, 0.65));
-      return mix(vegetation, t.highland, band(e, levels.beach, levels.rock) * 0.5);
+  private colorAt(e: number, m: number, t: IslandTheme, grain: number): RGB {
+    if (e < levels.deep) {
+      const deep = mix(WATER.abyss, WATER.deep, band(e, 0.08, levels.deep));
+      return mix(deep, WATER.shallow, grain * 0.12);
     }
-    if (e < levels.snow) return mix(t.rockLow, t.rockHigh, band(e, levels.rock, levels.snow));
-    return t.peak;
+    if (e < levels.shallow) {
+      const water = mix(WATER.deep, WATER.shallow, band(e, levels.deep, levels.shallow));
+      return mix(water, [180, 210, 220], grain * 0.18);
+    }
+    if (e < levels.beach) {
+      const wet: RGB = [t.sand[0] * 0.72, t.sand[1] * 0.78, t.sand[2] * 0.82];
+      return mix(wet, t.sand, band(e, levels.shallow, levels.beach) * 0.85 + grain * 0.15);
+    }
+    if (e < levels.rock) {
+      const vegetation = m < 0.42 ? mix(t.dry, t.grass, band(m, 0.22, 0.42)) : mix(t.grass, t.forest, band(m, 0.42, 0.72));
+      const slope = mix(vegetation, t.highland, band(e, levels.beach, levels.rock) * 0.55);
+      return mix(slope, t.forest, (grain - 0.5) * 0.22);
+    }
+    if (e < levels.cliff) return mix(t.highland, t.rockLow, band(e, levels.rock, levels.cliff));
+    if (e < levels.snow) {
+      const rock = mix(t.rockLow, t.rockHigh, band(e, levels.cliff, levels.snow));
+      return mix(rock, t.rockLow, grain * 0.2);
+    }
+    return mix(t.rockHigh, t.peak, 0.65 + grain * 0.35);
   }
 
   private paintOverview() {
@@ -306,27 +342,60 @@ export class WorldMap {
     canvas.height = rows;
     const ctx = canvas.getContext('2d')!;
     const img = ctx.createImageData(cols, rows);
+    const detail = createNoise(this.seed + 19);
     const at = (c: number, r: number) =>
       this.elevation[Math.min(rows - 1, Math.max(0, r)) * cols + Math.min(cols - 1, Math.max(0, c))];
+    const wet = (c: number, r: number) => {
+      for (const [dc, dr] of [
+        [1, 0],
+        [-1, 0],
+        [0, 1],
+        [0, -1],
+        [1, 1],
+        [-1, 1],
+      ] as const) {
+        if (at(c + dc, r + dr) < levels.shallow) return true;
+      }
+      return false;
+    };
 
     for (let r = 0; r < rows; r++) {
       for (let c = 0; c < cols; c++) {
         const i = r * cols + c;
         const e = this.elevation[i];
-        const [cr, cg, cb] = this.bridgeMask[i] ? WATER.bridge : this.colorAt(e, this.moisture[i], this.themeAt(i));
+        const t = this.themeAt(i);
+        const grain = detail.fbm(c / 18, r / 18, 4);
+        let col = this.bridgeMask[i]
+          ? mix(WATER.bridge, [110, 78, 48], ((c + r) & 1) * 0.25)
+          : this.colorAt(e, this.moisture[i], t, grain);
 
-        // Hillshade with light from the north-west; water stays flat.
+        if (!this.bridgeMask[i] && e >= levels.shallow && e < levels.beach + 0.03 && wet(c, r)) {
+          col = mix(col, [236, 244, 248], 0.28 + grain * 0.2);
+        }
+        if (!this.bridgeMask[i] && e < levels.shallow) {
+          const foam = detail.fbm(c / 9 + 8, r / 9 + 3, 3);
+          if (e > levels.deep && foam > 0.62) col = mix(col, [210, 230, 236], (foam - 0.62) * 1.4);
+        }
+        if (t.name === 'Ember Isle' && e >= levels.rock) {
+          const vein = detail.fbm(c / 11, r / 11, 3);
+          if (vein > 0.58) col = mix(col, t.peak, (vein - 0.58) * 1.6);
+        }
+        if (t.snowyTrees && e >= levels.beach && grain > 0.7) col = mix(col, t.peak, 0.35);
+
         let shade = 1;
         if (e >= levels.shallow) {
           const gx = at(c + 1, r) - at(c - 1, r);
           const gy = at(c, r + 1) - at(c, r - 1);
-          shade = Math.min(1.35, Math.max(0.6, 1 - (gx + gy) * 45));
+          const n = Math.hypot(gx * 70, gy * 70, 1);
+          shade = Math.min(1.4, Math.max(0.55, (0.55 + (-gx * 70 + gy * 70 + 1) / n) * 0.95));
+        } else {
+          shade = 0.92 + grain * 0.1;
         }
-        const k = shade * (0.95 + this.rand() * 0.1);
+        const k = shade * (0.94 + this.rand() * 0.12);
 
-        img.data[i * 4] = Math.min(255, cr * k);
-        img.data[i * 4 + 1] = Math.min(255, cg * k);
-        img.data[i * 4 + 2] = Math.min(255, cb * k);
+        img.data[i * 4] = Math.min(255, col[0] * k);
+        img.data[i * 4 + 1] = Math.min(255, col[1] * k);
+        img.data[i * 4 + 2] = Math.min(255, col[2] * k);
         img.data[i * 4 + 3] = 255;
       }
     }
@@ -336,7 +405,9 @@ export class WorldMap {
 
   private scatterProps() {
     const props: Prop[] = [];
-    const attempts = this.cols * this.rows * 0.12;
+    const add = (p: Prop) => props.push(p);
+    const tint = (c: RGB, j: number): RGB => [c[0] * j, c[1] * j, c[2] * j];
+    const attempts = this.cols * this.rows * 0.28;
 
     for (let n = 0; n < attempts; n++) {
       const x = this.rand() * this.width;
@@ -345,34 +416,117 @@ export class WorldMap {
       if (i < 0 || this.islandOf[i] < 0 || this.bridgeMask[i]) continue;
       const e = this.elevation[i];
       const t = this.themeAt(i);
+      const m = this.moisture[i];
+      const roll = this.rand();
+
+      if (e < levels.shallow && e > levels.deep) {
+        if (roll < 0.045) {
+          add({
+            x,
+            y,
+            kind: t.tree === 'palm' || t.name === 'Mire Isle' ? 'coral' : 'pebble',
+            size: 1.4 + this.rand() * 2.2,
+            color: t.tree === 'palm' ? [70, 160, 130] : mix(WATER.shallow, t.sand, 0.4),
+            seed: this.rand(),
+            snowy: false,
+          });
+        }
+        continue;
+      }
+
+      if (e >= levels.shallow && e <= levels.beach + 0.012) {
+        if (roll < 0.16) {
+          add({
+            x,
+            y,
+            kind: 'pebble',
+            size: 1.2 + this.rand() * 2.4,
+            color: tint(t.sand, 0.7 + this.rand() * 0.35),
+            seed: this.rand(),
+            snowy: false,
+          });
+        } else if (roll < 0.2 && (t.tree === 'palm' || t.name === 'Mire Isle')) {
+          add({
+            x,
+            y,
+            kind: 'reed',
+            size: 3 + this.rand() * 3,
+            color: t.tree === 'palm' ? [70, 140, 70] : [70, 90, 45],
+            seed: this.rand(),
+            snowy: false,
+          });
+        }
+        continue;
+      }
 
       if (e > levels.beach + 0.01 && e < levels.rock - 0.02) {
-        // Desert plants ignore moisture; palms crowd the beaches.
-        let density = t.tree === 'cactus' || t.tree === 'dead' ? 0.3 : band(this.moisture[i], 0.4, 0.7) * 0.9 + 0.03;
-        if (t.tree === 'palm') density *= e < levels.beach + 0.08 ? 2.5 : 0.6;
-        if (this.rand() < density * t.treeDensity) {
+        let density = t.tree === 'cactus' || t.tree === 'dead' ? 0.34 : band(m, 0.35, 0.75) * 0.95 + 0.04;
+        if (t.tree === 'palm') density *= e < levels.beach + 0.08 ? 2.6 : 0.55;
+        if (roll < density * t.treeDensity * 0.72) {
           const base = t.treeColors[Math.floor(this.rand() * t.treeColors.length)];
-          const j = 0.85 + this.rand() * 0.3;
-          props.push({
+          add({
             x,
             y,
             kind: t.tree,
-            size: 4 + this.rand() * 5,
-            color: [base[0] * j, base[1] * j, base[2] * j],
+            size: 5 + this.rand() * 8,
+            color: tint(base, 0.82 + this.rand() * 0.32),
             seed: this.rand(),
             snowy: !!t.snowyTrees,
           });
+        } else if (roll < density * t.treeDensity) {
+          const base = t.treeColors[0];
+          add({
+            x,
+            y,
+            kind: 'bush',
+            size: 2.5 + this.rand() * 3.2,
+            color: tint(base, 0.75 + this.rand() * 0.35),
+            seed: this.rand(),
+            snowy: !!t.snowyTrees,
+          });
+        } else if (roll < 0.22) {
+          const blossom = t.name === 'Blossom Isle' || t.treeColors.length > 2;
+          add({
+            x,
+            y,
+            kind: blossom && this.rand() < 0.55 ? 'flower' : 'tuft',
+            size: blossom ? 1.6 + this.rand() * 1.6 : 1.8 + this.rand() * 2.2,
+            color: blossom
+              ? t.treeColors[Math.floor(this.rand() * t.treeColors.length)]
+              : tint(t.grass, 0.85 + this.rand() * 0.3),
+            seed: this.rand(),
+            snowy: false,
+          });
+        } else if (t.name === 'Mire Isle' && roll < 0.32) {
+          add({
+            x,
+            y,
+            kind: 'reed',
+            size: 3 + this.rand() * 4,
+            color: [60, 85, 40],
+            seed: this.rand(),
+            snowy: false,
+          });
+        } else if (t.snowyTrees && roll < 0.3) {
+          add({
+            x,
+            y,
+            kind: 'crystal',
+            size: 2 + this.rand() * 3,
+            color: [180, 220, 235],
+            seed: this.rand(),
+            snowy: true,
+          });
         }
-      } else if (e >= levels.rock && e < levels.snow && this.rand() < 0.08) {
-        const j = 0.8 + this.rand() * 0.4;
-        props.push({
+      } else if (e >= levels.rock && e < levels.snow && roll < 0.18) {
+        add({
           x,
           y,
-          kind: 'rock',
-          size: 2 + this.rand() * 4,
-          color: [t.rockLow[0] * j, t.rockLow[1] * j, t.rockLow[2] * j],
+          kind: t.name === 'Frost Isle' && this.rand() < 0.35 ? 'crystal' : 'rock',
+          size: 2.5 + this.rand() * 6,
+          color: tint(t.rockLow, 0.78 + this.rand() * 0.4),
           seed: this.rand(),
-          snowy: false,
+          snowy: !!t.snowyTrees,
         });
       }
     }
@@ -380,7 +534,7 @@ export class WorldMap {
     props.sort((a, b) => a.y - b.y);
     const chunkRows = Math.ceil(this.height / CHUNK);
     for (const p of props) {
-      const reach = p.size * 2;
+      const reach = p.size * 2.4;
       const cx0 = Math.max(0, Math.floor((p.x - reach) / CHUNK));
       const cx1 = Math.min(this.chunkCols - 1, Math.floor((p.x + reach) / CHUNK));
       const cy0 = Math.max(0, Math.floor((p.y - reach) / CHUNK));
@@ -417,9 +571,36 @@ export class WorldMap {
     ctx.drawImage(this.overview, cx * s - 1, cy * s - 1, s + 2, s + 2, -this.cell, -this.cell, CHUNK + this.cell * 2, CHUNK + this.cell * 2);
 
     ctx.translate(-cx * CHUNK, -cy * CHUNK);
+    this.drawShoreFoam(ctx, cx * CHUNK, cy * CHUNK);
     this.drawBridges(ctx, cx * CHUNK, cy * CHUNK);
     for (const p of this.propBuckets[cy * this.chunkCols + cx]) drawProp(ctx, p);
     return canvas;
+  }
+
+  private drawShoreFoam(ctx: CanvasRenderingContext2D, x0: number, y0: number) {
+    const cell = this.cell;
+    const c0 = Math.max(0, Math.floor(x0 / cell) - 1);
+    const r0 = Math.max(0, Math.floor(y0 / cell) - 1);
+    const c1 = Math.min(this.cols - 1, Math.floor((x0 + CHUNK) / cell) + 1);
+    const r1 = Math.min(this.rows - 1, Math.floor((y0 + CHUNK) / cell) + 1);
+    ctx.fillStyle = 'rgba(236, 246, 252, 0.28)';
+    for (let r = r0; r <= r1; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const i = r * this.cols + c;
+        const e = this.elevation[i];
+        if (this.bridgeMask[i] || e < levels.shallow || e > levels.beach + 0.02) continue;
+        const n = [
+          i - 1,
+          i + 1,
+          i - this.cols,
+          i + this.cols,
+        ];
+        if (!n.some((j) => j >= 0 && j < this.elevation.length && this.elevation[j] < levels.shallow)) continue;
+        ctx.beginPath();
+        ctx.ellipse((c + 0.5) * cell, (r + 0.5) * cell, cell * 1.6, cell * 0.9, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
   }
 
   private drawBridges(ctx: CanvasRenderingContext2D, x0: number, y0: number) {

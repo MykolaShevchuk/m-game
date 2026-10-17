@@ -1,10 +1,7 @@
 import { Game } from '@/core/Game';
-import { loadCharacter } from '@/core/storage';
-import { CharacterSelectScene } from '@/scenes/CharacterSelectScene';
-import { PlayScene } from '@/scenes/PlayScene';
+import { ModeSelectScene } from '@/scenes/ModeSelectScene';
 
 const canvas = document.getElementById('game') as HTMLCanvasElement;
 const game = new Game(canvas);
-const saved = loadCharacter();
-game.scenes.switch(saved === null ? new CharacterSelectScene(game) : new PlayScene(game, saved));
+game.scenes.switch(new ModeSelectScene(game));
 game.start();
