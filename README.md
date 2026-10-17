@@ -22,6 +22,7 @@ src/
   main.ts             Entry point: creates Game, opens the first scene
   config.ts           All tunable numbers and colors in one place
   characters.ts       Playable characters: stats and perks
+  upgrades.ts         Level-up upgrades offered every CONFIG.upgradeEvery points
   core/
     Game.ts           Canvas setup + fixed-timestep game loop
     Camera.ts         Smooth follow camera, clamped to the world
@@ -43,6 +44,7 @@ src/
     text.ts           Canvas text helper
     drawCharacter.ts  Procedural character art (used in select screen and in game)
     minimap.ts        Overview map with camera frame, player and coins
+    UpgradePicker.ts  "Level up" overlay: pick 1 of 3 upgrades
 ```
 
 ## The map

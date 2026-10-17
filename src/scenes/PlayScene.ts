@@ -9,6 +9,8 @@ import { Enemy } from '@/entities/Enemy';
 import { Player } from '@/entities/Player';
 import { drawMinimap } from '@/ui/minimap';
 import { drawText } from '@/ui/text';
+import { UpgradePicker } from '@/ui/UpgradePicker';
+import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
 import { WorldMap } from '@/world/WorldMap';
 import { GameOverScene } from './GameOverScene';
 
@@ -23,6 +25,10 @@ export class PlayScene implements Scene {
   private score = 0;
   private spawnTimer = 0;
   private paused = false;
+  private mods: RunModifiers = { coinValue: 1, enemySpeed: 1 };
+  private nextUpgradeAt = CONFIG.upgradeEvery;
+  private picker: UpgradePicker | null = null;
+  private upgradesTaken: Upgrade[] = [];
 
   constructor(
     private game: Game,
@@ -38,6 +44,17 @@ export class PlayScene implements Scene {
   }
 
   update(dt: number) {
+    if (this.picker) {
+      const choice = this.picker.update(this.game.input);
+      if (choice) {
+        choice.apply({ player: this.player, mods: this.mods });
+        this.upgradesTaken.push(choice);
+        this.picker = null;
+        this.checkUpgrade();
+      }
+      return;
+    }
+
     if (this.game.input.wasPressed('KeyP', 'Escape')) this.paused = !this.paused;
     if (this.paused) return;
 
@@ -48,7 +65,7 @@ export class PlayScene implements Scene {
     }
 
     this.player.update(dt);
-    this.enemies.forEach((e) => e.update(dt));
+    this.enemies.forEach((e) => e.update(dt * this.mods.enemySpeed));
     this.coins.forEach((c) => c.update(dt));
     this.camera.follow(this.player, dt);
     this.pullCoins(dt);
@@ -56,11 +73,12 @@ export class PlayScene implements Scene {
     for (const coin of this.coins) {
       if (overlaps(this.player, coin)) {
         coin.alive = false;
-        this.score++;
+        this.score += this.mods.coinValue;
       }
     }
     this.coins = this.coins.filter((c) => c.alive);
     this.refillCoins();
+    this.checkUpgrade();
 
     if (!this.player.isInvulnerable && this.enemies.some((e) => overlaps(this.player, e))) {
       if (this.player.hit()) {
@@ -69,8 +87,17 @@ export class PlayScene implements Scene {
     }
   }
 
+  // Called again after each pick so several thresholds crossed at once each grant an upgrade.
+  private checkUpgrade() {
+    if (this.score < this.nextUpgradeAt) return;
+    const options = rollUpgrades({ player: this.player, mods: this.mods }, 3);
+    if (options.length === 0) return;
+    this.nextUpgradeAt += CONFIG.upgradeEvery;
+    this.picker = new UpgradePicker(options);
+  }
+
   private pullCoins(dt: number) {
-    const radius = this.player.character.magnet;
+    const radius = this.player.magnet;
     if (!radius) return;
     const px = this.player.x + this.player.w / 2;
     const py = this.player.y + this.player.h / 2;
@@ -124,12 +151,33 @@ export class PlayScene implements Scene {
     ctx.restore();
 
     drawMinimap(ctx, this.map, this.camera, this.player, this.coins);
-    drawText(ctx, `Score: ${this.score}`, 16, 24);
-    if (this.player.character.lives > 1) {
-      drawText(ctx, `Lives: ${'♥'.repeat(this.player.lives)}`, 16, 50);
-    }
-    if (this.paused) {
+    this.renderHud(ctx);
+    if (this.picker) {
+      this.picker.render(ctx, w, h);
+    } else if (this.paused) {
       drawText(ctx, 'PAUSED', w / 2, h / 2, 48, 'center');
     }
+  }
+
+  private renderHud(ctx: CanvasRenderingContext2D) {
+    drawText(ctx, `Score: ${this.score}`, 16, 24);
+    drawText(ctx, `Lives: ${'♥'.repeat(Math.max(0, this.player.lives))}`, 16, 50);
+
+    const barW = 160;
+    const progress = 1 - (this.nextUpgradeAt - this.score) / CONFIG.upgradeEvery;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(16, 68, barW, 8);
+    ctx.fillStyle = CONFIG.colors.coin;
+    ctx.fillRect(16, 68, barW * Math.min(1, Math.max(0, progress)), 8);
+    ctx.globalAlpha = 0.8;
+    drawText(ctx, `Next upgrade at ${this.nextUpgradeAt}`, 16 + barW + 10, 72, 12);
+    ctx.globalAlpha = 1;
+
+    this.upgradesTaken.forEach((u, i) => {
+      ctx.fillStyle = u.color;
+      ctx.font = '16px system-ui, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillText(u.icon, 26 + i * 22, 96);
+    });
   }
 }

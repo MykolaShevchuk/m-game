@@ -19,6 +19,7 @@ export const CONFIG = {
     spawnMaxDist: 700,
   },
   coin: { size: 12, count: 25 },
+  upgradeEvery: 30,
   minimap: { width: 200, margin: 12 },
   colors: {
     bg: '#1a1d26',
