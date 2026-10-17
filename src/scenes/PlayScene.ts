@@ -11,7 +11,9 @@ import { drawText } from '@/ui/text';
 import { UpgradePicker } from '@/ui/UpgradePicker';
 import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
 import { WorldMap } from '@/world/WorldMap';
+
 const MAGNET_SPEED = 320;
+const BANNER_TIME = 2.5;
 
 export class PlayScene implements Scene {
   private map: WorldMap;
@@ -24,6 +26,9 @@ export class PlayScene implements Scene {
   private nextUpgradeAt = CONFIG.upgradeEvery;
   private picker: UpgradePicker | null = null;
   private upgradesTaken: Upgrade[] = [];
+  private currentIsland = -1;
+  private visited = new Set<number>();
+  private banner = { text: '', time: 0 };
 
   constructor(
     private game: Game,
@@ -57,6 +62,7 @@ export class PlayScene implements Scene {
     this.coins.forEach((c) => c.update(dt));
     this.camera.follow(this.player, dt);
     this.pullCoins(dt);
+    this.trackIsland(dt);
 
     for (const coin of this.coins) {
       if (overlaps(this.player, coin)) {
@@ -67,6 +73,18 @@ export class PlayScene implements Scene {
     this.coins = this.coins.filter((c) => c.alive);
     this.refillCoins();
     this.checkUpgrade();
+  }
+
+  // The current island is kept while crossing a bridge, so the banner only shows on arrival.
+  private trackIsland(dt: number) {
+    this.banner.time = Math.max(0, this.banner.time - dt);
+    const island = this.map.islandAt(this.player.x + this.player.w / 2, this.player.y + this.player.h / 2);
+    if (island < 0 || island === this.currentIsland) return;
+    this.currentIsland = island;
+    const name = this.map.islands[island].theme.name;
+    const isNew = !this.visited.has(island);
+    this.visited.add(island);
+    this.banner = { text: isNew ? `Discovered ${name}` : name, time: BANNER_TIME };
   }
 
   // Called again after each pick so several thresholds crossed at once each grant an upgrade.
@@ -108,7 +126,7 @@ export class PlayScene implements Scene {
     const cy = Math.round(this.camera.y);
     const { width: w, height: h } = this.game;
 
-    ctx.drawImage(this.map.canvas, cx, cy, w, h, 0, 0, w, h);
+    this.map.draw(ctx, cx, cy, w, h);
 
     ctx.save();
     ctx.translate(-cx, -cy);
@@ -118,10 +136,35 @@ export class PlayScene implements Scene {
 
     drawMinimap(ctx, this.map, this.camera, this.player, this.coins);
     this.renderHud(ctx);
+    this.renderIslandInfo(ctx);
     if (this.picker) {
       this.picker.render(ctx, w, h);
     } else if (this.paused) {
       drawText(ctx, 'PAUSED', w / 2, h / 2, 48, 'center');
+    }
+  }
+
+  private renderIslandInfo(ctx: CanvasRenderingContext2D) {
+    const { width: w } = this.game;
+    const minimapH = (this.map.height / this.map.width) * CONFIG.minimap.width;
+    const name = this.currentIsland >= 0 ? this.map.islands[this.currentIsland].theme.name : 'Open sea';
+    drawText(
+      ctx,
+      `${name}  ·  ${this.visited.size}/${this.map.islands.length} islands`,
+      w - CONFIG.minimap.margin,
+      CONFIG.minimap.margin + minimapH + 14,
+      13,
+      'right',
+    );
+
+    if (this.banner.time > 0) {
+      ctx.globalAlpha = Math.min(1, this.banner.time, (BANNER_TIME - this.banner.time) * 4);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+      ctx.beginPath();
+      ctx.roundRect(w / 2 - 190, 34, 380, 52, 10);
+      ctx.fill();
+      drawText(ctx, this.banner.text, w / 2, 60, 26, 'center');
+      ctx.globalAlpha = 1;
     }
   }
 

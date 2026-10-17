@@ -3,13 +3,15 @@ export const CONFIG = {
   height: 540,
   fixedStep: 1 / 60,
   world: {
-    width: 2560,
-    height: 1600,
+    width: 5600,
+    height: 3600,
     cell: 4,
+    chunk: 512,
+    islands: 10,
     /** Elevation thresholds (0..1) separating terrain bands. */
     levels: { deep: 0.3, shallow: 0.4, beach: 0.425, rock: 0.72, cliff: 0.78, snow: 0.84 },
   },
-  coin: { size: 12, count: 25 },
+  coin: { size: 12, count: 60 },
   upgradeEvery: 30,
   minimap: { width: 200, margin: 12 },
   colors: {

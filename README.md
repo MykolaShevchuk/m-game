@@ -39,7 +39,8 @@ src/
     GameOverScene.ts  Result + restart
   world/
     noise.ts          Seeded value noise + fBm
-    WorldMap.ts       Island generation, terrain colors, hillshade, trees/rocks, walkability
+    themes.ts         The 10 island themes: palettes and tree styles
+    WorldMap.ts       Archipelago generation, bridges, hillshade, props, walkability, chunked drawing
   ui/
     text.ts           Canvas text helper
     drawCharacter.ts  Procedural character art (used in select screen and in game)
@@ -49,7 +50,11 @@ src/
 
 ## The map
 
-Each game generates a new island from a random seed. Elevation comes from fractal noise mixed with a falloff that sinks the borders into the sea; a second noise layer controls moisture (dry grass → grassland → forest). Terrain bands are set by `CONFIG.world.levels`: water and anything above `cliff` is impassable. The terrain is painted once into an offscreen canvas and the camera draws only the visible part each frame.
+Each game generates a new archipelago of `CONFIG.world.islands` (10) islands from a random seed. Island centres are scattered with a minimum spacing; elevation is fractal noise shaped by a domain-warped falloff around each centre, so coastlines get bays and peninsulas. Every island gets a theme from `src/world/themes.ts` (Greenwood, Pine, Dune, Palm, Frost, Ember, Amber, Blossom, Mire, Mesa) with its own palette and tree style.
+
+Wooden bridges follow a minimum spanning tree over the island centres (plus two extra links), so every island is reachable. Coins only spawn on land connected to the start island. Terrain bands are set by `CONFIG.world.levels`: water and anything above `cliff` is impassable.
+
+The world is too large for one canvas, so it is drawn in 512 px chunks rendered on demand and kept in a small LRU cache.
 
 ## How it fits together
 
