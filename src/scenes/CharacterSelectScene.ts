@@ -1,7 +1,7 @@
 import { CHARACTERS } from '@/characters';
 import type { Game } from '@/core/Game';
 import type { Scene } from '@/core/Scene';
-import { loadHighScore } from '@/core/storage';
+import { loadHighScore, saveCharacter } from '@/core/storage';
 import { drawCharacter } from '@/ui/drawCharacter';
 import { drawText } from '@/ui/text';
 import { PlayScene } from './PlayScene';
@@ -29,6 +29,7 @@ export class CharacterSelectScene implements Scene {
       if (input.wasPressed(`Digit${i + 1}`)) this.selected = i;
     });
     if (input.wasPressed('Enter', 'Space')) {
+      saveCharacter(this.selected);
       this.game.scenes.switch(new PlayScene(this.game, this.selected));
     }
   }
