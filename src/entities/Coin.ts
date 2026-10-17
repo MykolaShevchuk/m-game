@@ -5,9 +5,8 @@ import { Entity } from './Entity';
 export class Coin extends Entity {
   private t = rand(0, Math.PI * 2);
 
-  constructor() {
-    const s = CONFIG.coin.size;
-    super(rand(s, CONFIG.width - s * 2), rand(s, CONFIG.height - s * 2), s, s);
+  constructor(x: number, y: number) {
+    super(x, y, CONFIG.coin.size, CONFIG.coin.size);
   }
 
   update(dt: number) {

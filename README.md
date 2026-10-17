@@ -23,6 +23,7 @@ src/
   config.ts           All tunable numbers and colors in one place
   core/
     Game.ts           Canvas setup + fixed-timestep game loop
+    Camera.ts         Smooth follow camera, clamped to the world
     Scene.ts          Scene interface + SceneManager (switch/update/render)
     Input.ts          Keyboard state: isDown, wasPressed, axis()
     math.ts           Rect, clamp, rand, AABB overlap
@@ -34,9 +35,17 @@ src/
     MenuScene.ts      Title screen
     PlayScene.ts      Gameplay: spawning, collisions, score
     GameOverScene.ts  Result + restart
+  world/
+    noise.ts          Seeded value noise + fBm
+    WorldMap.ts       Island generation, terrain colors, hillshade, trees/rocks, walkability
   ui/
     text.ts           Canvas text helper
+    minimap.ts        Overview map with camera frame, player and coins
 ```
+
+## The map
+
+Each game generates a new island from a random seed. Elevation comes from fractal noise mixed with a falloff that sinks the borders into the sea; a second noise layer controls moisture (dry grass → grassland → forest). Terrain bands are set by `CONFIG.world.levels`: water and anything above `cliff` is impassable. The terrain is painted once into an offscreen canvas and the camera draws only the visible part each frame.
 
 ## How it fits together
 
