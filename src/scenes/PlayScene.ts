@@ -15,6 +15,7 @@ import { drawText } from '@/ui/text';
 import { UpgradePicker } from '@/ui/UpgradePicker';
 import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
 import { WorldMap } from '@/world/WorldMap';
+import { CharacterSelectScene } from './CharacterSelectScene';
 
 const MAGNET_SPEED = 320;
 const BANNER_TIME = 2.5;
@@ -39,7 +40,7 @@ export class PlayScene implements Scene {
 
   constructor(
     private game: Game,
-    characterIndex: number,
+    private characterIndex: number,
   ) {
     const character = CHARACTERS[characterIndex];
     this.map = new WorldMap(Math.floor(Math.random() * 2 ** 31));
@@ -64,7 +65,12 @@ export class PlayScene implements Scene {
     }
 
     if (this.game.input.wasPressed('KeyP', 'Escape')) this.paused = !this.paused;
-    if (this.paused) return;
+    if (this.paused) {
+      if (this.game.input.wasPressed('KeyC')) {
+        this.game.scenes.switch(new CharacterSelectScene(this.game, this.characterIndex));
+      }
+      return;
+    }
 
     this.player.update(dt);
     this.coins.forEach((c) => c.update(dt));
@@ -192,6 +198,9 @@ export class PlayScene implements Scene {
       this.picker.render(ctx, w, h);
     } else if (this.paused) {
       drawText(ctx, 'PAUSED', w / 2, h / 2, 48, 'center');
+      ctx.globalAlpha = 0.8;
+      drawText(ctx, 'C to change character', w / 2, h / 2 + 40, 16, 'center');
+      ctx.globalAlpha = 1;
     }
   }
 

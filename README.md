@@ -11,7 +11,7 @@ npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build
 ```
 
-Controls: WASD / arrow keys to move, P / Esc to pause, Enter to start.
+Controls: WASD / arrow keys to move, P / Esc to pause, Enter to start, C while paused to change character. The chosen character is remembered, so the select screen only appears on first launch.
 
 ## Structure
 
@@ -30,7 +30,7 @@ src/
     Scene.ts          Scene interface + SceneManager (switch/update/render)
     Input.ts          Keyboard state: isDown, wasPressed, axis()
     math.ts           Rect, clamp, rand, AABB overlap
-    storage.ts        High score in localStorage
+    storage.ts        High score and chosen character in localStorage
   entities/
     Entity.ts         Base class: position, size, alive flag
     Player.ts / Coin.ts
