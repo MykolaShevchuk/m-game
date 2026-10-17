@@ -84,7 +84,8 @@ export type ClientAction =
   | { kind: 'hire'; troop: TroopId; hutId: number }
   | { kind: 'garrison'; station: boolean }
   | { kind: 'menuNav'; menu: 'build' | 'recruit' | 'none' }
-  | { kind: 'hit'; targetId: string };
+  | { kind: 'hit'; targetId: string }
+  | { kind: 'trade'; give: Partial<Inventory>; get: Partial<Inventory> };
 
 export type ServerMsg =
   | { type: 'error'; message: string }

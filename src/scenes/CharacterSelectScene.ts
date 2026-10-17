@@ -157,7 +157,7 @@ export class CharacterSelectScene implements Scene {
       ctx.stroke();
 
       const bob = active ? Math.sin(this.t * 4) * 4 : 0;
-      const artOpts = { walkTime: active ? this.t : this.t * 0.35, facing: { x: 1, y: 0.2 } };
+      const artOpts = { time: this.t, facing: { x: 1, y: 0.2 } };
 
       if (L.vertical) {
         drawCharacter(ctx, c, x + 40, y + L.cardH / 2 + bob * 0.5, L.artSize * 1.15, artOpts);

@@ -10,10 +10,10 @@ const MAX_CACHED_CHUNKS = 48;
 const BRIDGE_HALF_WIDTH = 28;
 
 const WATER = {
-  abyss: [16, 38, 72],
-  deep: [28, 68, 118],
-  shallow: [62, 128, 168],
-  bridge: [140, 100, 62],
+  abyss: [22, 42, 58],
+  deep: [36, 72, 98],
+  shallow: [68, 118, 138],
+  bridge: [128, 96, 64],
 } satisfies Record<string, RGB>;
 
 interface Island {
@@ -28,6 +28,12 @@ interface Bridge {
   ay: number;
   bx: number;
   by: number;
+}
+
+export interface VillageSite {
+  x: number;
+  y: number;
+  island: number;
 }
 
 type PropKind = TreeStyle | 'rock' | 'bush' | 'flower' | 'reed' | 'pebble' | 'tuft' | 'coral' | 'crystal';
@@ -54,6 +60,7 @@ export class WorldMap {
   readonly cols = Math.ceil(this.width / this.cell);
   readonly rows = Math.ceil(this.height / this.cell);
   readonly islands: Island[] = [];
+  readonly villageSites: VillageSite[] = [];
 
   /** One pixel per cell; used for the minimap and as the base layer of each chunk. */
   readonly overview: HTMLCanvasElement;
@@ -83,6 +90,7 @@ export class WorldMap {
     this.generate();
     this.buildBridges();
     this.floodReachable();
+    this.placeVillages();
     this.overview = this.paintOverview();
     this.scatterProps();
   }
@@ -153,6 +161,41 @@ export class WorldMap {
     return null;
   }
 
+  private placeVillages() {
+    const want = [0, 2, 3, 5, 7, 8];
+    for (const island of want) {
+      if (island >= this.islands.length) continue;
+      const spot = this.findVillageSite(island);
+      if (spot) this.villageSites.push({ ...spot, island });
+    }
+  }
+
+  private findVillageSite(island: number) {
+    const { x: cx, y: cy, r } = this.islands[island];
+    const w = 172;
+    const h = 132;
+    for (let n = 0; n < 900; n++) {
+      const ang = this.rand() * Math.PI * 2;
+      const dist = r * (0.18 + this.rand() * 0.28);
+      const x = cx + Math.cos(ang) * dist - w / 2;
+      const y = cy + Math.sin(ang) * dist - h / 2;
+      if (island === 0 && Math.hypot(x + w / 2 - cx, y + h / 2 - cy) < 200) continue;
+      if (this.villageSiteFits(x, y, w, h, island)) return { x, y };
+    }
+    return null;
+  }
+
+  private villageSiteFits(x: number, y: number, w: number, h: number, island: number) {
+    const step = 18;
+    for (let py = y + 8; py < y + h - 8; py += step) {
+      for (let px = x + 8; px < x + w - 8; px += step) {
+        if (this.islandAt(px, py) !== island) return false;
+        if (!this.isWalkable(px, py)) return false;
+      }
+    }
+    return true;
+  }
+
   /** Walkable point as close to the first island's centre as possible. */
   spawnPoint(size: number) {
     const { x: cx, y: cy, r } = this.islands[0];
@@ -177,6 +220,113 @@ export class WorldMap {
         ctx.drawImage(this.chunk(cx, cy), cx * CHUNK - camX, cy * CHUNK - camY);
       }
     }
+    this.drawWaves(ctx, camX, camY, viewW, viewH, performance.now() / 1000);
+  }
+
+  private isOpenWater(x: number, y: number) {
+    const i = this.index(x, y);
+    return i >= 0 && !this.bridgeMask[i] && this.elevation[i] < levels.shallow;
+  }
+
+  private touchesLand(x: number, y: number) {
+    const s = this.cell * 2;
+    return (
+      !this.isOpenWater(x + s, y) ||
+      !this.isOpenWater(x - s, y) ||
+      !this.isOpenWater(x, y + s) ||
+      !this.isOpenWater(x, y - s)
+    );
+  }
+
+  private drawWaves(ctx: CanvasRenderingContext2D, camX: number, camY: number, viewW: number, viewH: number, t: number) {
+    ctx.save();
+    ctx.lineCap = 'round';
+    ctx.lineJoin = 'round';
+
+    const layers = [
+      { step: 20, sample: 8, freq: 0.014, speed: 1.0, yfreq: 0.006, amp: 6.5, width: 2.4, light: 0.22, dark: 0.14 },
+      { step: 13, sample: 7, freq: 0.024, speed: 1.55, yfreq: 0.01, amp: 3.8, width: 1.6, light: 0.16, dark: 0.1 },
+      { step: 8, sample: 6, freq: 0.036, speed: 2.1, yfreq: 0.016, amp: 2.2, width: 1.1, light: 0.11, dark: 0.07 },
+    ] as const;
+
+    const strokeLayer = (kind: 'light' | 'dark') => {
+      for (const layer of layers) {
+        ctx.strokeStyle =
+          kind === 'light'
+            ? `rgba(${WATER.shallow[0] + 42}, ${WATER.shallow[1] + 30}, ${WATER.shallow[2] + 20}, ${layer.light})`
+            : `rgba(${WATER.deep[0] - 6}, ${WATER.deep[1] - 10}, ${WATER.deep[2] - 8}, ${layer.dark})`;
+        ctx.lineWidth = kind === 'light' ? layer.width : layer.width + 0.9;
+        const shift = kind === 'dark' ? Math.PI : 0;
+        // Snap rows/samples to the world grid so waves stay put as the camera moves.
+        const y0 = Math.floor((camY - layer.amp - 6) / layer.step) * layer.step;
+        const y1 = camY + viewH + layer.amp + 6;
+        const x0 = Math.floor(camX / layer.sample) * layer.sample;
+        const x1 = camX + viewW;
+        for (let wy = y0; wy <= y1; wy += layer.step) {
+          const sy = wy - camY;
+          ctx.beginPath();
+          let drawing = false;
+          for (let wx = x0; wx <= x1; wx += layer.sample) {
+            const sx = wx - camX;
+            if (!this.isOpenWater(wx, wy)) {
+              if (drawing) {
+                ctx.stroke();
+                ctx.beginPath();
+                drawing = false;
+              }
+              continue;
+            }
+            const e = this.elevationAt(wx, wy);
+            const amp = layer.amp * (e > levels.deep ? 0.5 : 1);
+            const phase = wx * layer.freq + t * layer.speed + wy * layer.yfreq + shift;
+            const py =
+              sy +
+              Math.sin(phase) * amp +
+              Math.sin(phase * 0.5 + wy * 0.02) * amp * 0.4 +
+              Math.sin(phase * 1.7 + wx * 0.01) * amp * 0.15;
+            if (!drawing) {
+              ctx.moveTo(sx, py);
+              drawing = true;
+            } else {
+              ctx.lineTo(sx, py);
+            }
+          }
+          if (drawing) ctx.stroke();
+        }
+      }
+    };
+
+    strokeLayer('dark');
+    strokeLayer('light');
+
+    ctx.fillStyle = `rgba(${WATER.shallow[0] + 50}, ${WATER.shallow[1] + 38}, ${WATER.shallow[2] + 28}, 0.18)`;
+    const foam = 18;
+    const fy0 = Math.floor(camY / foam) * foam;
+    const fx0 = Math.floor(camX / foam) * foam;
+    for (let wy = fy0; wy < camY + viewH; wy += foam) {
+      for (let wx = fx0; wx < camX + viewW; wx += foam) {
+        if (!this.isOpenWater(wx, wy)) continue;
+        if (this.elevationAt(wx, wy) <= levels.deep) continue;
+        if (!this.touchesLand(wx, wy)) continue;
+        const pulse = 0.5 + 0.5 * Math.sin(wx * 0.045 + t * 2.0 + wy * 0.03);
+        if (pulse < 0.65) continue;
+        const sx = wx - camX;
+        const sy = wy - camY;
+        ctx.beginPath();
+        ctx.ellipse(
+          sx + 4,
+          sy + Math.sin(t * 1.4 + wx * 0.04) * 1.6,
+          3 + pulse * 3,
+          1.1 + pulse * 0.5,
+          0,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+    }
+
+    ctx.restore();
   }
 
   private placeIslands() {
@@ -205,8 +355,8 @@ export class WorldMap {
         const px = (c + 0.5) * cell;
         const py = (r + 0.5) * cell;
         // Domain warping bends coastlines into bays and peninsulas instead of circles.
-        const wx = px + (warp.fbm(px / 500, py / 500, 4) - 0.5) * 900;
-        const wy = py + (warp.fbm(px / 500 + 31, py / 500 + 17, 4) - 0.5) * 900;
+        const wx = px + (warp.fbm(px / 500, py / 500, 4) - 0.5) * 900 + (warp.fbm(px / 90, py / 90, 2) - 0.5) * 70;
+        const wy = py + (warp.fbm(px / 500 + 31, py / 500 + 17, 4) - 0.5) * 900 + (warp.fbm(px / 90 + 11, py / 90 + 4, 2) - 0.5) * 70;
         const w = 0.7 + 0.6 * warp.fbm(px / 300 + 7, py / 300 + 7, 3);
 
         let best = 0;
@@ -222,8 +372,9 @@ export class WorldMap {
 
         const falloff = best > 0 ? 1 - (1 - best) ** 2 : 0;
         const n = height.fbm(px / 640, py / 640, 6);
+        const ridge = Math.abs(height.fbm(px / 210 + 9, py / 210 + 4, 3) - 0.5) * 2;
         const i = r * cols + c;
-        this.elevation[i] = falloff * (0.4 + 0.6 * n);
+        this.elevation[i] = falloff * (0.36 + 0.5 * n + 0.14 * (1 - ridge));
         this.islandOf[i] = owner;
         this.moisture[i] = wet.fbm(px / 850 + 50, py / 850 + 50, 4) + (owner >= 0 ? this.islands[owner].theme.moisture : 0);
       }
@@ -310,26 +461,45 @@ export class WorldMap {
   }
 
   private colorAt(e: number, m: number, t: IslandTheme, grain: number): RGB {
+    const snowy = !!t.snowyTrees;
     if (e < levels.deep) {
       const deep = mix(WATER.abyss, WATER.deep, band(e, 0.08, levels.deep));
-      return mix(deep, WATER.shallow, grain * 0.12);
+      const base = mix(deep, WATER.shallow, grain * 0.12);
+      return snowy ? mix(base, [48, 78, 98], 0.22) : base;
     }
     if (e < levels.shallow) {
       const water = mix(WATER.deep, WATER.shallow, band(e, levels.deep, levels.shallow));
-      return mix(water, [180, 210, 220], grain * 0.18);
+      const base = mix(water, [180, 210, 220], grain * 0.18);
+      return snowy ? mix(base, [160, 198, 214], 0.28) : base;
     }
     if (e < levels.beach) {
+      if (snowy) {
+        // Icy shore — pale ice over cold sand.
+        const ice = mix([168, 192, 208], t.sand, 0.45 + grain * 0.2);
+        return mix(ice, t.peak, band(e, levels.shallow, levels.beach) * 0.35);
+      }
       const wet: RGB = [t.sand[0] * 0.72, t.sand[1] * 0.78, t.sand[2] * 0.82];
       return mix(wet, t.sand, band(e, levels.shallow, levels.beach) * 0.85 + grain * 0.15);
     }
     if (e < levels.rock) {
+      if (snowy) {
+        // Snowfield with soft blue shadows in hollows.
+        const drift = mix(t.grass, t.peak, 0.55 + grain * 0.35);
+        const hollow = mix(drift, [168, 188, 208], (1 - grain) * 0.35);
+        const rise = mix(hollow, t.highland, band(e, levels.beach, levels.rock) * 0.25);
+        return mix(rise, t.peak, band(e, levels.beach, levels.rock) * 0.4);
+      }
       const vegetation = m < 0.42 ? mix(t.dry, t.grass, band(m, 0.22, 0.42)) : mix(t.grass, t.forest, band(m, 0.42, 0.72));
       const slope = mix(vegetation, t.highland, band(e, levels.beach, levels.rock) * 0.55);
       return mix(slope, t.forest, (grain - 0.5) * 0.22);
     }
-    if (e < levels.cliff) return mix(t.highland, t.rockLow, band(e, levels.rock, levels.cliff));
+    if (e < levels.cliff) {
+      if (snowy) return mix(mix(t.highland, t.rockLow, 0.35), t.peak, 0.55 + grain * 0.25);
+      return mix(t.highland, t.rockLow, band(e, levels.rock, levels.cliff));
+    }
     if (e < levels.snow) {
       const rock = mix(t.rockLow, t.rockHigh, band(e, levels.cliff, levels.snow));
+      if (snowy) return mix(rock, t.peak, 0.7 + grain * 0.2);
       return mix(rock, t.rockLow, grain * 0.2);
     }
     return mix(t.rockHigh, t.peak, 0.65 + grain * 0.35);
@@ -370,17 +540,26 @@ export class WorldMap {
           : this.colorAt(e, this.moisture[i], t, grain);
 
         if (!this.bridgeMask[i] && e >= levels.shallow && e < levels.beach + 0.03 && wet(c, r)) {
-          col = mix(col, [236, 244, 248], 0.28 + grain * 0.2);
+          col = mix(col, t.snowyTrees ? [200, 220, 232] : [210, 220, 224], 0.18 + grain * 0.14);
         }
         if (!this.bridgeMask[i] && e < levels.shallow) {
           const foam = detail.fbm(c / 9 + 8, r / 9 + 3, 3);
-          if (e > levels.deep && foam > 0.62) col = mix(col, [210, 230, 236], (foam - 0.62) * 1.4);
+          if (e > levels.deep && foam > 0.66) {
+            col = mix(col, t.snowyTrees ? [210, 228, 238] : [190, 210, 216], (foam - 0.66) * 1.1);
+          }
         }
         if (t.name === 'Ember Isle' && e >= levels.rock) {
           const vein = detail.fbm(c / 11, r / 11, 3);
           if (vein > 0.58) col = mix(col, t.peak, (vein - 0.58) * 1.6);
         }
-        if (t.snowyTrees && e >= levels.beach && grain > 0.7) col = mix(col, t.peak, 0.35);
+        if (t.snowyTrees && e >= levels.beach) {
+          // Drifts and wind-scoured patches across the snowfield.
+          const drift = detail.fbm(c / 14 + 3, r / 14 + 7, 3);
+          if (drift > 0.55) col = mix(col, t.peak, (drift - 0.55) * 1.3);
+          else if (drift < 0.32) col = mix(col, [158, 178, 198], (0.32 - drift) * 0.9);
+          // Sparse dark rock poking through.
+          if (grain > 0.82 && e >= levels.rock) col = mix(col, t.rockLow, 0.45);
+        }
 
         let shade = 1;
         if (e >= levels.shallow) {
@@ -441,9 +620,9 @@ export class WorldMap {
             y,
             kind: 'pebble',
             size: 1.2 + this.rand() * 2.4,
-            color: tint(t.sand, 0.7 + this.rand() * 0.35),
+            color: tint(t.snowyTrees ? [200, 214, 226] : t.sand, 0.7 + this.rand() * 0.35),
             seed: this.rand(),
-            snowy: false,
+            snowy: !!t.snowyTrees,
           });
         } else if (roll < 0.2 && (t.tree === 'palm' || t.name === 'Mire Isle')) {
           add({
@@ -455,6 +634,16 @@ export class WorldMap {
             seed: this.rand(),
             snowy: false,
           });
+        } else if (t.snowyTrees && roll < 0.28) {
+          add({
+            x,
+            y,
+            kind: 'pebble',
+            size: 1.8 + this.rand() * 2.8,
+            color: [236, 244, 252],
+            seed: this.rand(),
+            snowy: true,
+          });
         }
         continue;
       }
@@ -462,6 +651,7 @@ export class WorldMap {
       if (e > levels.beach + 0.01 && e < levels.rock - 0.02) {
         let density = t.tree === 'cactus' || t.tree === 'dead' ? 0.34 : band(m, 0.35, 0.75) * 0.95 + 0.04;
         if (t.tree === 'palm') density *= e < levels.beach + 0.08 ? 2.6 : 0.55;
+        if (t.snowyTrees) density = 0.42;
         if (roll < density * t.treeDensity * 0.72) {
           const base = t.treeColors[Math.floor(this.rand() * t.treeColors.length)];
           add({
@@ -483,6 +673,17 @@ export class WorldMap {
             color: tint(base, 0.75 + this.rand() * 0.35),
             seed: this.rand(),
             snowy: !!t.snowyTrees,
+          });
+        } else if (t.snowyTrees && roll < 0.55) {
+          // Soft snow drifts and ice lumps (mostly round pebbles).
+          add({
+            x,
+            y,
+            kind: this.rand() < 0.75 ? 'pebble' : 'crystal',
+            size: 2 + this.rand() * 3.5,
+            color: this.rand() < 0.75 ? [240, 246, 252] : [170, 210, 230],
+            seed: this.rand(),
+            snowy: true,
           });
         } else if (roll < 0.22) {
           const blossom = t.name === 'Blossom Isle' || t.treeColors.length > 2;
@@ -507,24 +708,14 @@ export class WorldMap {
             seed: this.rand(),
             snowy: false,
           });
-        } else if (t.snowyTrees && roll < 0.3) {
-          add({
-            x,
-            y,
-            kind: 'crystal',
-            size: 2 + this.rand() * 3,
-            color: [180, 220, 235],
-            seed: this.rand(),
-            snowy: true,
-          });
         }
-      } else if (e >= levels.rock && e < levels.snow && roll < 0.18) {
+      } else if (e >= levels.rock && e < levels.snow && roll < (t.snowyTrees ? 0.28 : 0.18)) {
         add({
           x,
           y,
-          kind: t.name === 'Frost Isle' && this.rand() < 0.35 ? 'crystal' : 'rock',
+          kind: t.snowyTrees && this.rand() < 0.25 ? 'crystal' : 'rock',
           size: 2.5 + this.rand() * 6,
-          color: tint(t.rockLow, 0.78 + this.rand() * 0.4),
+          color: tint(t.snowyTrees ? [150, 170, 190] : t.rockLow, 0.78 + this.rand() * 0.4),
           seed: this.rand(),
           snowy: !!t.snowyTrees,
         });
@@ -632,10 +823,18 @@ export class WorldMap {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.25)';
       for (const [x, y] of planks) quad(x + 4, y + 5, 3.5, half);
       for (const [x, y, n] of planks) {
-        ctx.fillStyle = n % 2 ? '#8d6339' : '#a0733f';
+        ctx.fillStyle = n % 2 ? '#7a5a38' : '#8c6a44';
         quad(x, y, 2.6, half);
       }
-      ctx.fillStyle = '#5b3d22';
+      ctx.strokeStyle = 'rgba(58, 40, 24, 0.65)';
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      for (const [x, y] of planks) {
+        ctx.moveTo(x - uy * half, y + ux * half);
+        ctx.lineTo(x + uy * half, y - ux * half);
+      }
+      ctx.stroke();
+      ctx.fillStyle = '#4a3420';
       for (const [x, y, n] of planks) {
         if (n % 4) continue;
         ctx.fillRect(x - uy * half - 2, y + ux * half - 2, 4, 4);
@@ -652,61 +851,109 @@ function drawShadow(ctx: CanvasRenderingContext2D, x: number, y: number, s: numb
   ctx.fill();
 }
 
-function star(ctx: CanvasRenderingContext2D, x: number, y: number, outer: number, inner: number, points: number, rot: number) {
-  ctx.beginPath();
-  for (let i = 0; i < points * 2; i++) {
-    const a = rot + (i * Math.PI) / points;
-    const d = i % 2 === 0 ? outer : inner;
-    ctx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d);
-  }
-  ctx.closePath();
-  ctx.fill();
-}
-
 function drawProp(ctx: CanvasRenderingContext2D, p: Prop) {
   const { x, y, size: s, color: c } = p;
   const rand = mulberry32(Math.floor(p.seed * 2 ** 31));
 
   switch (p.kind) {
-    case 'round':
-      drawShadow(ctx, x, y, s);
-      ctx.fillStyle = rgb(c);
+    case 'round': {
+      drawShadow(ctx, x, y, s * 1.15);
+      ctx.fillStyle = '#5a3d22';
       ctx.beginPath();
-      ctx.arc(x, y, s, 0, Math.PI * 2);
+      ctx.ellipse(x, y + s * 0.15, s * 0.22, s * 0.18, 0, 0, Math.PI * 2);
       ctx.fill();
-      ctx.fillStyle = rgb(c, 1.5, 0.45);
+      const lobes = 4 + Math.floor(rand() * 3);
+      for (let i = 0; i < lobes; i++) {
+        const a = rand() * Math.PI * 2;
+        const d = s * (0.15 + rand() * 0.45);
+        ctx.fillStyle = rgb(c, 0.78 + rand() * 0.35);
+        ctx.beginPath();
+        ctx.ellipse(
+          x + Math.cos(a) * d,
+          y + Math.sin(a) * d * 0.7 - s * 0.15,
+          s * (0.45 + rand() * 0.25),
+          s * (0.4 + rand() * 0.2),
+          a,
+          0,
+          Math.PI * 2,
+        );
+        ctx.fill();
+      }
+      ctx.fillStyle = rgb(c, 1.45, 0.4);
       ctx.beginPath();
-      ctx.arc(x - s * 0.3, y - s * 0.3, s * 0.55, 0, Math.PI * 2);
+      ctx.arc(x - s * 0.28, y - s * 0.4, s * 0.38, 0, Math.PI * 2);
       ctx.fill();
       break;
+    }
 
     case 'pine': {
       drawShadow(ctx, x, y, s);
-      const rot = rand() * Math.PI;
-      ctx.fillStyle = rgb(c, 0.75);
-      star(ctx, x, y, s * 1.1, s * 0.6, 8, rot);
-      ctx.fillStyle = rgb(c);
-      star(ctx, x, y, s * 0.7, s * 0.4, 8, rot + 0.2);
+      ctx.fillStyle = p.snowy ? '#3a3228' : '#4a3420';
+      ctx.fillRect(x - s * 0.1, y, s * 0.2, s * 0.35);
+      // Soft stacked lobes — no star spikes.
+      const tiers = [
+        { y: -0.05, w: 1.05, h: 0.42, k: 0.72 },
+        { y: -0.28, w: 0.78, h: 0.36, k: 0.9 },
+        { y: -0.48, w: 0.52, h: 0.3, k: 1.1 },
+        { y: -0.65, w: 0.28, h: 0.22, k: 1.25 },
+      ];
+      for (const tier of tiers) {
+        ctx.fillStyle = rgb(c, tier.k);
+        ctx.beginPath();
+        ctx.ellipse(x + (rand() - 0.5) * s * 0.06, y + tier.y * s, s * tier.w * 0.5, s * tier.h, 0, 0, Math.PI * 2);
+        ctx.fill();
+      }
       if (p.snowy) {
-        ctx.fillStyle = 'rgba(250, 252, 255, 0.85)';
-        star(ctx, x - s * 0.1, y - s * 0.1, s * 0.45, s * 0.25, 6, rot);
+        ctx.fillStyle = 'rgba(248, 252, 255, 0.9)';
+        for (const tier of tiers) {
+          ctx.beginPath();
+          ctx.ellipse(
+            x + (rand() - 0.5) * s * 0.08,
+            y + tier.y * s - s * 0.08,
+            s * tier.w * 0.38,
+            s * tier.h * 0.45,
+            (rand() - 0.5) * 0.3,
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+        ctx.fillStyle = 'rgba(240, 246, 252, 0.65)';
+        ctx.beginPath();
+        ctx.ellipse(x, y + s * 0.05, s * 0.16, s * 0.08, 0, 0, Math.PI * 2);
+        ctx.fill();
       }
       break;
     }
 
     case 'palm': {
       drawShadow(ctx, x, y, s);
+      ctx.strokeStyle = '#8a6238';
+      ctx.lineWidth = Math.max(2, s * 0.18);
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      ctx.moveTo(x, y + s * 0.35);
+      ctx.quadraticCurveTo(x + s * 0.25, y, x + s * 0.08, y - s * 0.35);
+      ctx.stroke();
       const rot = rand() * Math.PI;
-      ctx.fillStyle = rgb(c);
-      for (let i = 0; i < 6; i++) {
-        const a = rot + (i * Math.PI * 2) / 6;
+      for (let i = 0; i < 7; i++) {
+        const a = rot + (i * Math.PI * 2) / 7;
+        ctx.fillStyle = rgb(c, 0.85 + (i % 2) * 0.25);
         ctx.beginPath();
-        ctx.ellipse(x + Math.cos(a) * s * 0.6, y + Math.sin(a) * s * 0.6, s * 0.7, s * 0.22, a, 0, Math.PI * 2);
+        ctx.ellipse(
+          x + s * 0.08 + Math.cos(a) * s * 0.7,
+          y - s * 0.35 + Math.sin(a) * s * 0.55,
+          s * 0.85,
+          s * 0.18,
+          a,
+          0,
+          Math.PI * 2,
+        );
         ctx.fill();
       }
-      ctx.fillStyle = '#7a5a32';
+      ctx.fillStyle = '#6b4a28';
       ctx.beginPath();
-      ctx.arc(x, y, s * 0.22, 0, Math.PI * 2);
+      ctx.arc(x + s * 0.08, y - s * 0.35, s * 0.16, 0, Math.PI * 2);
       ctx.fill();
       break;
     }
@@ -727,38 +974,189 @@ function drawProp(ctx: CanvasRenderingContext2D, p: Prop) {
       ctx.rect(x + s * 0.15, y - s * 0.25, s * 0.4, s * 0.18);
       ctx.fill();
       ctx.stroke();
+      ctx.fillStyle = rgb(c, 1.4, 0.35);
+      ctx.beginPath();
+      ctx.roundRect(x - s * 0.12, y - s * 0.85, s * 0.16, s * 0.9, s * 0.08);
+      ctx.fill();
       break;
     }
 
     case 'dead': {
       drawShadow(ctx, x, y, s * 0.6);
       ctx.strokeStyle = rgb(c);
-      ctx.lineWidth = 1.5;
+      ctx.lineWidth = 1.8;
       ctx.lineCap = 'round';
       ctx.beginPath();
-      for (let i = 0; i < 5; i++) {
-        const a = rand() * Math.PI * 2;
-        const ex = x + Math.cos(a) * s;
-        const ey = y + Math.sin(a) * s;
-        ctx.moveTo(x, y);
-        ctx.lineTo(ex, ey);
-        const fork = a + (rand() - 0.5) * 1.6;
-        ctx.moveTo(x + Math.cos(a) * s * 0.6, y + Math.sin(a) * s * 0.6);
-        ctx.lineTo(x + Math.cos(fork) * s * 0.6 + Math.cos(fork) * s * 0.4, y + Math.sin(fork) * s * 0.6 + Math.sin(fork) * s * 0.4);
+      ctx.moveTo(x, y + s * 0.4);
+      ctx.lineTo(x, y - s * 0.2);
+      for (let i = 0; i < 6; i++) {
+        const a = -1.2 + rand() * 2.4;
+        const len = s * (0.5 + rand() * 0.7);
+        ctx.moveTo(x, y - s * 0.1);
+        ctx.lineTo(x + Math.cos(a - Math.PI / 2) * len, y - s * 0.1 + Math.sin(a - Math.PI / 2) * len);
       }
       ctx.stroke();
       break;
     }
 
-    case 'rock':
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.3)';
+    case 'bush': {
+      drawShadow(ctx, x, y, s * 0.9);
+      for (let i = 0; i < 4; i++) {
+        ctx.fillStyle = rgb(c, 0.8 + i * 0.12);
+        ctx.beginPath();
+        ctx.arc(x + (rand() - 0.5) * s, y + (rand() - 0.5) * s * 0.6, s * (0.45 + rand() * 0.3), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      if (p.snowy) {
+        ctx.fillStyle = 'rgba(248, 252, 255, 0.88)';
+        for (let i = 0; i < 3; i++) {
+          ctx.beginPath();
+          ctx.ellipse(
+            x + (rand() - 0.5) * s * 0.7,
+            y - s * 0.15 + (rand() - 0.5) * s * 0.3,
+            s * (0.28 + rand() * 0.2),
+            s * (0.16 + rand() * 0.1),
+            rand(),
+            0,
+            Math.PI * 2,
+          );
+          ctx.fill();
+        }
+      }
+      break;
+    }
+
+    case 'flower': {
+      ctx.fillStyle = rgb(c, 0.55);
       ctx.beginPath();
-      ctx.ellipse(x + s * 0.4, y + s * 0.4, s, s * 0.7, 0, 0, Math.PI * 2);
+      ctx.arc(x, y + s * 0.4, s * 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = rgb(c);
+      for (let i = 0; i < 5; i++) {
+        const a = (i * Math.PI * 2) / 5;
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(a) * s * 0.45, y + Math.sin(a) * s * 0.45, s * 0.38, s * 0.22, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.fillStyle = '#ffe082';
+      ctx.beginPath();
+      ctx.arc(x, y, s * 0.28, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case 'reed': {
+      ctx.strokeStyle = rgb(c);
+      ctx.lineWidth = 1.2;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < 4; i++) {
+        const ox = (rand() - 0.5) * s;
+        ctx.moveTo(x + ox, y + s * 0.4);
+        ctx.quadraticCurveTo(x + ox + s * 0.2, y, x + ox + (rand() - 0.5) * s * 0.4, y - s);
+      }
+      ctx.stroke();
+      ctx.fillStyle = rgb(c, 1.2);
+      ctx.beginPath();
+      ctx.ellipse(x, y - s * 0.85, s * 0.18, s * 0.35, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case 'pebble': {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+      ctx.beginPath();
+      ctx.ellipse(x + s * 0.2, y + s * 0.15, s * 0.9, s * 0.45, 0.3, 0, Math.PI * 2);
       ctx.fill();
       ctx.fillStyle = rgb(c);
       ctx.beginPath();
-      ctx.ellipse(x, y, s, s * 0.75, 0.4, 0, Math.PI * 2);
+      ctx.ellipse(x, y, s, s * 0.62, rand(), 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = rgb(c, 1.35, 0.4);
+      ctx.beginPath();
+      ctx.ellipse(x - s * 0.25, y - s * 0.15, s * 0.35, s * 0.18, 0.4, 0, Math.PI * 2);
       ctx.fill();
       break;
+    }
+
+    case 'tuft': {
+      ctx.strokeStyle = rgb(c);
+      ctx.lineWidth = 1.1;
+      ctx.lineCap = 'round';
+      ctx.beginPath();
+      for (let i = 0; i < 5; i++) {
+        const a = -0.7 + i * 0.35;
+        ctx.moveTo(x, y + s * 0.2);
+        ctx.lineTo(x + Math.sin(a) * s, y - s * (0.5 + rand() * 0.5));
+      }
+      ctx.stroke();
+      break;
+    }
+
+    case 'coral': {
+      ctx.fillStyle = rgb(c, 0.7, 0.55);
+      for (let i = 0; i < 5; i++) {
+        const a = rand() * Math.PI * 2;
+        ctx.beginPath();
+        ctx.ellipse(x + Math.cos(a) * s * 0.4, y + Math.sin(a) * s * 0.3, s * 0.35, s * 0.7, a, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
+
+    case 'crystal': {
+      // Soft ice lumps — rounded, not spike shards.
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.18)';
+      ctx.beginPath();
+      ctx.ellipse(x + s * 0.15, y + s * 0.25, s * 0.85, s * 0.35, 0.2, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = rgb(c, 0.95, 0.85);
+      ctx.beginPath();
+      ctx.ellipse(x, y, s * 0.7, s * 0.55, -0.15, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = rgb(c, 1.15, 0.9);
+      ctx.beginPath();
+      ctx.ellipse(x + s * 0.35, y - s * 0.05, s * 0.4, s * 0.38, 0.25, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.beginPath();
+      ctx.ellipse(x - s * 0.15, y - s * 0.15, s * 0.28, s * 0.16, -0.4, 0, Math.PI * 2);
+      ctx.fill();
+      break;
+    }
+
+    case 'rock': {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.32)';
+      ctx.beginPath();
+      ctx.ellipse(x + s * 0.35, y + s * 0.4, s * 1.05, s * 0.65, 0.3, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = rgb(c, 0.85);
+      ctx.beginPath();
+      ctx.moveTo(x - s, y);
+      ctx.lineTo(x - s * 0.3, y - s * 0.75);
+      ctx.lineTo(x + s * 0.7, y - s * 0.35);
+      ctx.lineTo(x + s, y + s * 0.25);
+      ctx.lineTo(x + s * 0.1, y + s * 0.7);
+      ctx.lineTo(x - s * 0.7, y + s * 0.4);
+      ctx.closePath();
+      ctx.fill();
+      ctx.fillStyle = rgb(c, 1.25);
+      ctx.beginPath();
+      ctx.moveTo(x - s * 0.2, y - s * 0.55);
+      ctx.lineTo(x + s * 0.35, y - s * 0.25);
+      ctx.lineTo(x - s * 0.05, y + s * 0.05);
+      ctx.closePath();
+      ctx.fill();
+      if (p.snowy) {
+        ctx.fillStyle = 'rgba(248, 252, 255, 0.9)';
+        ctx.beginPath();
+        ctx.ellipse(x - s * 0.1, y - s * 0.5, s * 0.5, s * 0.22, -0.2, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.beginPath();
+        ctx.ellipse(x + s * 0.25, y - s * 0.2, s * 0.28, s * 0.14, 0.3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      break;
+    }
   }
 }

@@ -8,7 +8,8 @@ export type QuestGoal =
   | { kind: 'build'; building?: BuildingId; count: number }
   | { kind: 'hire'; troop?: TroopId; count: number }
   | { kind: 'islands'; count: number }
-  | { kind: 'nights'; count: number };
+  | { kind: 'nights'; count: number }
+  | { kind: 'trade'; count: number };
 
 export interface QuestDef {
   id: string;
@@ -25,6 +26,13 @@ export const QUESTS: QuestDef[] = [
     description: 'Collect 8 wood',
     goal: { kind: 'collect', resource: 'wood', count: 8 },
     reward: { stone: 4, berries: 3 },
+  },
+  {
+    id: 'trade-once',
+    title: 'Open Market',
+    description: 'Trade at a village',
+    goal: { kind: 'trade', count: 1 },
+    reward: { wood: 4, stone: 2 },
   },
   {
     id: 'build-hut',
@@ -113,7 +121,8 @@ export type QuestEvent =
   | { type: 'build'; building: BuildingId }
   | { type: 'hire'; troop: TroopId }
   | { type: 'islands'; total: number }
-  | { type: 'night' };
+  | { type: 'night' }
+  | { type: 'trade' };
 
 /** Advances through QUESTS one at a time; returns completed quests when a goal is met. */
 export class QuestTracker {
@@ -177,6 +186,9 @@ export class QuestTracker {
         break;
       case 'nights':
         if (event.type === 'night') this.progress++;
+        break;
+      case 'trade':
+        if (event.type === 'trade') this.progress++;
         break;
     }
   }

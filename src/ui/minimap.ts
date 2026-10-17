@@ -8,6 +8,7 @@ export interface MinimapLayout {
   viewW?: number;
   width?: number;
   players?: { rect: Rect; color: string }[];
+  villages?: Rect[];
 }
 
 export function drawMinimap(
@@ -40,6 +41,10 @@ export function drawMinimap(
   for (const c of coins) ctx.fillRect(x + c.x * scale - 1, y + c.y * scale - 1, 2, 2);
   ctx.fillStyle = '#c4a574';
   for (const house of houses) ctx.fillRect(x + house.x * scale - 1.5, y + house.y * scale - 1.5, 3, 3);
+  ctx.fillStyle = '#e8c36a';
+  for (const v of layout.villages ?? []) {
+    ctx.fillRect(x + (v.x + v.w / 2) * scale - 2, y + (v.y + v.h / 2) * scale - 2, 4, 4);
+  }
 
   const extras = layout.players;
   if (extras?.length) {

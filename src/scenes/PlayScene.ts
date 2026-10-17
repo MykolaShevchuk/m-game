@@ -1,3 +1,4 @@
+import { Music } from '@/audio/Music';
 import { BUILDINGS, canAfford, spend, type BuildingDef } from '@/buildings';
 import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
@@ -12,6 +13,7 @@ import { House } from '@/entities/House';
 import { Player } from '@/entities/Player';
 import { Resource } from '@/entities/Resource';
 import { Troop } from '@/entities/Troop';
+import { Village } from '@/entities/Village';
 import type { NetClient } from '@/net/NetClient';
 import type { GameStateSnap, ServerMsg } from '@/net/protocol';
 import { grantReward, QuestTracker, rewardList, type QuestDef } from '@/quests';
@@ -26,13 +28,17 @@ import { Popups } from '@/ui/popups';
 import { drawQuestPanel } from '@/ui/questPanel';
 import { drawText } from '@/ui/text';
 import { drawTouchControls, touchBottomPad, touchLayout } from '@/ui/touchControls';
+import { drawTradeMenu, tradeMenuCards } from '@/ui/tradeMenu';
 import { drawTroopMenu, troopMenuCards } from '@/ui/troopMenu';
+import { applyOffer, canAffordOffer, VILLAGE_TRADE_RANGE } from '@/villages';
 import { UpgradePicker } from '@/ui/UpgradePicker';
 import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
 import { DayNight, formatClock } from '@/world/dayNight';
 import { WorldMap } from '@/world/WorldMap';
 import { GameOverScene } from './GameOverScene';
 import { ModeSelectScene } from './ModeSelectScene';
+
+const PRE_PVP_THEME = `${import.meta.env.BASE_URL}audio/blueprint_of_a_kingdom.mp3`;
 
 const MAGNET_SPEED = 320;
 const BANNER_TIME = 2.5;
@@ -51,8 +57,10 @@ interface Agent {
   score: number;
   building: boolean;
   recruiting: boolean;
+  trading: boolean;
   selectedBuilding: number;
   selectedTroop: number;
+  selectedTrade: number;
   mods: RunModifiers;
   nextUpgradeAt: number;
   picker: UpgradePicker | null;
@@ -81,6 +89,7 @@ export class PlayScene implements Scene {
   private paused = false;
   private banner = { text: '', time: 0 };
   private houses: House[] = [];
+  private villages: Village[] = [];
   private troops: Troop[] = [];
   private dayNight = new DayNight();
   private resourceSpawnTimer = 0;
@@ -94,6 +103,8 @@ export class PlayScene implements Scene {
   private endTimer = 0;
   private bolts: Bolt[] = [];
   private swings: { x: number; y: number; angle: number; range: number; cone: number; color: string; age: number; life: number }[] = [];
+  private music = new Music(PRE_PVP_THEME);
+  private musicStopped = false;
 
   constructor(
     private game: Game,
@@ -107,20 +118,31 @@ export class PlayScene implements Scene {
 
     const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 31);
     this.map = new WorldMap(seed);
+    this.villages = this.map.villageSites.map(
+      (s) => new Village(s.x, s.y, this.map.islands[s.island].theme, s.island),
+    );
 
     const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
     const viewH = this.game.height;
 
     opts.characters.forEach((charIndex, i) => {
       const character = CHARACTERS[charIndex];
-      const spawn = this.map.spawnPoint(character.size);
+      const size = character.size;
+      let spawn = this.map.spawnPoint(size);
+      if (this.obstructs({ x: spawn.x, y: spawn.y, w: size, h: size })) {
+        spawn =
+          this.map.randomWalkablePoint(
+            size,
+            (x, y) => this.map.islandAt(x + size / 2, y + size / 2) === 0 && !this.obstructs({ x, y, w: size, h: size }),
+          ) ?? spawn;
+      }
       const offset = i === 0 ? 0 : 36;
       const controls =
         this.splitScreen
           ? this.game.input.slot(Math.min(i, 1) as PlayerSlot)
           : this.game.input.solo();
       const player = new Player(spawn.x + offset, spawn.y, controls, this.map, character, i);
-      player.blocked = (r) => this.houses.some((h) => overlaps(r, h));
+      player.blocked = (r) => this.obstructs(r);
       const camera = new Camera(viewW, viewH, this.map.width, this.map.height);
       camera.follow(player, Infinity);
       this.agents.push({
@@ -133,8 +155,10 @@ export class PlayScene implements Scene {
         score: 0,
         building: false,
         recruiting: false,
+        trading: false,
         selectedBuilding: 0,
         selectedTroop: 0,
+        selectedTrade: 0,
         mods: { coinValue: 1, enemySpeed: 1 },
         nextUpgradeAt: CONFIG.upgradeEvery,
         picker: null,
@@ -169,11 +193,20 @@ export class PlayScene implements Scene {
   enter() {
     this.game.input.setTouchUi(true);
     this.syncTouchHandlers();
+    if (!this.dayNight.pvpActive) void this.music.play();
   }
 
   exit() {
+    this.music.stop(400);
     this.game.input.setTouchUi(false);
     this.game.input.setTouchHandlers(null, []);
+  }
+
+  /** Stops the pre-PvP theme once PvP unlocks (or when leaving the scene). */
+  private stopPrePvpMusic() {
+    if (this.musicStopped) return;
+    this.musicStopped = true;
+    this.music.stop();
   }
 
   private syncCameras() {
@@ -184,7 +217,7 @@ export class PlayScene implements Scene {
 
   private needsConfirm() {
     const a = this.primaryLocal();
-    return (a.building || a.recruiting) && this.menuOwner === a;
+    return (a.building || a.recruiting || a.trading) && this.menuOwner === a;
   }
 
   private syncTouchHandlers() {
@@ -267,6 +300,7 @@ export class PlayScene implements Scene {
         for (const a of this.agents) {
           a.building = false;
           a.recruiting = false;
+          a.trading = false;
         }
         this.menuOwner = null;
       }
@@ -308,12 +342,24 @@ export class PlayScene implements Scene {
           for (const a of this.agents) this.completeQuests(a, a.quests.report({ type: 'night' }));
         }
       }
-      if (pvpUnlocked && this.canFight()) {
-        this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
+      if (pvpUnlocked) {
+        this.stopPrePvpMusic();
+        if (this.canFight()) {
+          this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
+        }
       }
     }
 
-    const blocked = (r: Rect) => this.houses.some((h) => overlaps(r, h));
+    if (this.dayNight.pvpActive) {
+      this.stopPrePvpMusic();
+    } else if (!this.musicStopped && !this.music.isPlaying) {
+      // Retry if the browser blocked autoplay until a gesture.
+      void this.music.play();
+    }
+
+
+    const blocked = (r: Rect) => this.obstructs(r);
+    for (const v of this.villages) v.update(dt);
     for (const agent of this.agents) {
       if (agent.player.lives <= 0) continue;
       if (!agent.remote) agent.player.update(dt);
@@ -389,7 +435,7 @@ export class PlayScene implements Scene {
     for (const agent of this.agents) {
       if (agent.remote || agent.player.lives <= 0) continue;
       if (agent.building || agent.recruiting) continue;
-      if (agent.controls.interactPressed() && !this.nearestBuilding(agent)) this.tryAttack(agent);
+      if (agent.controls.interactPressed() && !this.nearestBuilding(agent) && !this.nearestVillage(agent)) this.tryAttack(agent);
     }
 
     this.updateBolts();
@@ -613,8 +659,11 @@ export class PlayScene implements Scene {
   private applyNetState(state: GameStateSnap) {
     const wasPvp = this.dayNight.pvpActive;
     this.dayNight.setElapsed(state.dayElapsed);
-    if (!wasPvp && this.dayNight.pvpActive && this.canFight()) {
-      this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
+    if (!wasPvp && this.dayNight.pvpActive) {
+      this.stopPrePvpMusic();
+      if (this.canFight()) {
+        this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
+      }
     }
 
     // Sync remote player poses / create missing agents
@@ -624,7 +673,7 @@ export class PlayScene implements Scene {
         const character = CHARACTERS[snap.character] ?? CHARACTERS[0];
         const controls = this.game.input.slot(0);
         const player = new Player(snap.x, snap.y, controls, this.map, character, this.agents.length);
-        player.blocked = (r) => this.houses.some((h) => overlaps(r, h));
+        player.blocked = (r) => this.obstructs(r);
         const viewW = this.game.width;
         const camera = new Camera(viewW, this.game.height, this.map.width, this.map.height);
         camera.follow(player, Infinity);
@@ -639,8 +688,10 @@ export class PlayScene implements Scene {
           score: snap.score,
           building: false,
           recruiting: false,
+          trading: false,
           selectedBuilding: 0,
           selectedTroop: 0,
+          selectedTrade: 0,
           mods: { coinValue: 1, enemySpeed: 1 },
           nextUpgradeAt: CONFIG.upgradeEvery,
           picker: null,
@@ -658,9 +709,11 @@ export class PlayScene implements Scene {
       agent.player.lives = snap.alive ? snap.lives : 0;
       if (prevLives > agent.player.lives) agent.player.flashHurt();
       if (agent.remote) {
+        const moved = Math.hypot(snap.x - agent.player.x, snap.y - agent.player.y) > 0.5;
         agent.player.x = snap.x;
         agent.player.y = snap.y;
         agent.player.facing = { x: snap.facingX, y: snap.facingY };
+        agent.player.walkTime = moved ? agent.player.walkTime + 1 / 20 : 0;
       }
     }
     this.checkCombatEnd();
@@ -737,10 +790,12 @@ export class PlayScene implements Scene {
       if (this.menuOwner && this.menuOwner !== agent) {
         this.menuOwner.building = false;
         this.menuOwner.recruiting = false;
+        this.menuOwner.trading = false;
       }
       agent.building = !agent.building;
       if (agent.building) {
         agent.recruiting = false;
+        agent.trading = false;
         this.menuOwner = agent;
       } else if (this.menuOwner === agent) {
         this.menuOwner = null;
@@ -844,6 +899,91 @@ export class PlayScene implements Scene {
     return this.findBuilding(agent, () => true, INTERACT_RANGE);
   }
 
+  private obstructs(r: Rect) {
+    return this.houses.some((h) => overlaps(r, h)) || this.villages.some((v) => v.blocks(r));
+  }
+
+  private nearestVillage(agent: Agent) {
+    const px = agent.player.x + agent.player.w / 2;
+    const py = agent.player.y + agent.player.h / 2;
+    let best: Village | null = null;
+    let bestDist = VILLAGE_TRADE_RANGE;
+    for (const v of this.villages) {
+      const d = Math.hypot(px - v.stallX, py - v.stallY);
+      if (d < bestDist) {
+        best = v;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  private openTrade(agent: Agent, village: Village) {
+    if (this.menuOwner && this.menuOwner !== agent) {
+      this.menuOwner.building = false;
+      this.menuOwner.recruiting = false;
+      this.menuOwner.trading = false;
+    }
+    agent.trading = true;
+    agent.building = false;
+    agent.recruiting = false;
+    agent.selectedTrade = Math.min(agent.selectedTrade, village.offers.length - 1);
+    this.menuOwner = agent;
+  }
+
+  private updateTrade(agent: Agent) {
+    if (!agent.trading || this.menuOwner !== agent) return;
+    const village = this.nearestVillage(agent);
+    if (!village) {
+      agent.trading = false;
+      if (this.menuOwner === agent) this.menuOwner = null;
+      return;
+    }
+    const n = village.offers.length;
+    const buy = () => {
+      const offer = village.offers[agent.selectedTrade];
+      const px = agent.player.x + agent.player.w / 2;
+      const py = agent.player.y;
+      if (!canAffordOffer(agent.inventory, offer)) {
+        this.popups.add(offer.stock <= 0 ? 'Sold out' : 'Not enough', '#ef5350', px, py);
+        return;
+      }
+      if (this.net) {
+        this.net.send({
+          type: 'action',
+          action: { kind: 'trade', give: { [offer.giveId]: offer.giveN }, get: { [offer.getId]: offer.getN } },
+        });
+        offer.stock -= 1;
+      } else {
+        applyOffer(agent.inventory, offer);
+      }
+      const got = RESOURCE_BY_ID[offer.getId];
+      this.popups.add(`+${offer.getN} ${got.name}`, got.color, village.stallX, village.y);
+      this.completeQuests(agent, agent.quests.report({ type: 'trade' }));
+    };
+
+    const input = this.game.input;
+    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
+    const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
+    const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
+    const tap = input.peekTap();
+    if (tap) {
+      const hit = tradeMenuCards(n, menuLayout).find((c) => pointIn(tap, c.x, c.y, c.w, c.h));
+      if (hit) {
+        input.consumeTap();
+        agent.selectedTrade = hit.index;
+        buy();
+        return;
+      }
+    }
+    if (input.wasPressed('KeyQ')) agent.selectedTrade = (agent.selectedTrade + n - 1) % n;
+    if (input.wasPressed('KeyE')) agent.selectedTrade = (agent.selectedTrade + 1) % n;
+    for (let i = 0; i < n; i++) {
+      if (input.wasPressed(`Digit${i + 1}`)) agent.selectedTrade = i;
+    }
+    if (input.wasPressed('Enter')) buy();
+  }
+
   private interactKeyLabel(agent: Agent) {
     return agent.id === 0 || this.net ? 'F' : 'M';
   }
@@ -878,6 +1018,7 @@ export class PlayScene implements Scene {
       }
       agent.recruiting = true;
       agent.building = false;
+      agent.trading = false;
       this.menuOwner = agent;
       return;
     }
@@ -932,11 +1073,18 @@ export class PlayScene implements Scene {
       if (agent.recruiting) {
         agent.recruiting = false;
         if (this.menuOwner === agent) this.menuOwner = null;
-      } else if (this.dayNight.pvpActive && this.canFight() && !this.nearestBuilding(agent)) {
+      } else if (agent.trading) {
+        agent.trading = false;
+        if (this.menuOwner === agent) this.menuOwner = null;
+      } else if (this.dayNight.pvpActive && this.canFight() && !this.nearestBuilding(agent) && !this.nearestVillage(agent)) {
         // Combat uses F / interact; buildings still win if you're standing on one.
       } else {
         const nearby = this.nearestBuilding(agent);
         if (nearby) this.interactWith(agent, nearby);
+        else {
+          const village = this.nearestVillage(agent);
+          if (village) this.openTrade(agent, village);
+        }
       }
     }
 
@@ -948,6 +1096,8 @@ export class PlayScene implements Scene {
       agent.recruiting = false;
       if (this.menuOwner === agent) this.menuOwner = null;
     }
+    this.updateTrade(agent);
+
     if (!agent.recruiting || !recruitHut || this.menuOwner !== agent) return;
 
     const input = this.game.input;
@@ -1004,7 +1154,7 @@ export class PlayScene implements Scene {
   private canPlace(agent: Agent, def: BuildingDef, spot: Rect) {
     if (!canAfford(agent.inventory, def)) return false;
     if (this.agents.some((a) => overlaps(spot, a.player))) return false;
-    if (this.houses.some((h) => overlaps(spot, h))) return false;
+    if (this.obstructs(spot)) return false;
     // Corners + center only — dense grids rejected large footprints on jagged coasts.
     const inset = 4;
     const points: [number, number][] = [
@@ -1018,7 +1168,7 @@ export class PlayScene implements Scene {
   }
 
   private isFree(x: number, y: number, size: number) {
-    return !this.houses.some((h) => overlaps(h, { x, y, w: size, h: size }));
+    return !this.obstructs({ x, y, w: size, h: size });
   }
 
   private trackIsland(agent: Agent, dt: number) {
@@ -1250,8 +1400,9 @@ export class PlayScene implements Scene {
     ctx.translate(-cx, -cy);
     this.resources.forEach((r) => r.render(ctx));
     this.coins.forEach((c) => c.render(ctx));
-    const sprites = [...this.houses, ...this.troops, ...this.agents.map((a) => a.player)].sort(
-      (a, b) => a.y + a.h - (b.y + b.h),
+    const depth = (s: { y: number; h: number }) => (s instanceof Village ? s.stallY + 16 : s.y + s.h);
+    const sprites = [...this.houses, ...this.villages, ...this.troops, ...this.agents.map((a) => a.player)].sort(
+      (a, b) => depth(a) - depth(b),
     );
     sprites.forEach((s) => s.render(ctx));
     this.bolts.forEach((b) => b.render(ctx));
@@ -1269,8 +1420,9 @@ export class PlayScene implements Scene {
     drawMinimap(ctx, this.map, agent.camera, agent.player, this.coins, this.houses, {
       originX: 0,
       viewW: vw,
-      width: Math.min(140, vw - 24),
+      width: Math.min(CONFIG.minimap.width, vw - 24),
       players,
+      villages: this.villages,
     });
 
     this.renderHud(ctx, agent, vw);
@@ -1290,6 +1442,18 @@ export class PlayScene implements Scene {
       drawBuildMenu(ctx, agent.inventory, BUILDINGS[agent.selectedBuilding], menuLayout);
     } else if (agent.recruiting && this.menuOwner === agent) {
       drawTroopMenu(ctx, agent.inventory, TROOPS[agent.selectedTroop], menuLayout);
+    } else if (agent.trading && this.menuOwner === agent) {
+      const village = this.nearestVillage(agent);
+      if (village) {
+        drawTradeMenu(
+          ctx,
+          agent.inventory,
+          village.offers,
+          agent.selectedTrade,
+          village.name,
+          menuLayout,
+        );
+      }
     } else {
       drawInventory(ctx, agent.inventory, {
         originX: 0,
@@ -1333,7 +1497,7 @@ export class PlayScene implements Scene {
   }
 
   private renderIslandInfo(ctx: CanvasRenderingContext2D, agent: Agent, vw: number) {
-    const minimapW = Math.min(140, vw - 24);
+    const minimapW = Math.min(CONFIG.minimap.width, vw - 24);
     const minimapH = (this.map.height / this.map.width) * minimapW;
     const name = agent.currentIsland >= 0 ? this.map.islands[agent.currentIsland].theme.name : 'Open sea';
     drawText(
@@ -1355,6 +1519,15 @@ export class PlayScene implements Scene {
       ctx.roundRect(vw / 2 - 110, vh - lift - 16, 220, 28, 8);
       ctx.fill();
       drawText(ctx, this.interactHint(agent, nearby), vw / 2, vh - lift, 13, 'center');
+      return;
+    }
+    const village = this.nearestVillage(agent);
+    if (village) {
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
+      ctx.beginPath();
+      ctx.roundRect(vw / 2 - 130, vh - lift - 16, 260, 28, 8);
+      ctx.fill();
+      drawText(ctx, `${this.interactKeyLabel(agent)} — Trade at ${village.name}`, vw / 2, vh - lift, 13, 'center');
       return;
     }
     const aura = this.activeAura(agent);

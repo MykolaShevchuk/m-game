@@ -6,8 +6,8 @@ type IconFn = (ctx: CanvasRenderingContext2D, r: number) => void;
 export function drawResource(ctx: CanvasRenderingContext2D, id: ResourceId, cx: number, cy: number, size: number) {
   ctx.save();
   ctx.translate(cx, cy);
-  ctx.lineWidth = Math.max(1, size / 14);
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.75)';
+  ctx.lineWidth = Math.max(1, size / 18);
+  ctx.strokeStyle = 'rgba(40, 36, 28, 0.35)';
   ctx.lineJoin = 'round';
   ICONS[id](ctx, size / 2);
   ctx.restore();
@@ -122,23 +122,23 @@ const ICONS: Record<ResourceId, IconFn> = {
       ctx.fill();
       ctx.stroke();
     };
-    shard(-0.45, 1.1, 0.25, '#4fb8e0');
-    shard(0.45, 1.0, 0.25, '#4fb8e0');
-    shard(0, 1.7, 0.32, '#8eeaff');
-    ctx.fillStyle = 'rgba(255, 255, 255, 0.75)';
+    shard(-0.45, 1.1, 0.25, '#4a8898');
+    shard(0.45, 1.0, 0.25, '#4a8898');
+    shard(0, 1.7, 0.32, '#7ab0c0');
+    ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
     poly(ctx, [[-0.12, -0.6], [0, -0.85], [0, 0.6], [-0.12, 0.6]], r);
     ctx.fill();
   },
 
   obsidian(ctx, r) {
-    ctx.fillStyle = '#2a2233';
+    ctx.fillStyle = '#2a262c';
     poly(ctx, [[-0.2, -0.9], [0.6, -0.45], [0.85, 0.3], [0.15, 0.85], [-0.75, 0.5], [-0.8, -0.3]], r);
     ctx.fill();
     ctx.stroke();
-    ctx.fillStyle = '#6c4fa3';
+    ctx.fillStyle = '#5a4e68';
     poly(ctx, [[-0.2, -0.9], [0.6, -0.45], [0.1, -0.1], [-0.8, -0.3]], r);
     ctx.fill();
-    ctx.strokeStyle = '#ff8a3d';
+    ctx.strokeStyle = '#a07048';
     ctx.beginPath();
     ctx.moveTo(0.1 * r, -0.1 * r);
     ctx.lineTo(0.15 * r, 0.85 * r);

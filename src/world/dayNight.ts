@@ -74,17 +74,22 @@ export class DayNight {
     const d = this.darkness;
     if (d <= 0) return;
 
-    ctx.fillStyle = `rgba(6, 10, 36, ${d * 0.58})`;
+    // Warm dusk into cool night — softer than a flat blue wash.
+    if (d < 0.5) {
+      ctx.fillStyle = `rgba(48, 28, 18, ${d * 0.35})`;
+    } else {
+      ctx.fillStyle = `rgba(12, 18, 32, ${(d - 0.15) * 0.52})`;
+    }
     ctx.fillRect(0, 0, w, h);
 
-    if (d > 0.35) {
+    if (d > 0.45) {
       ctx.save();
-      ctx.globalAlpha = (d - 0.35) * 0.7;
-      ctx.fillStyle = '#e8eef8';
-      for (let i = 0; i < 28; i++) {
+      ctx.globalAlpha = (d - 0.45) * 0.45;
+      ctx.fillStyle = '#d8e0ea';
+      for (let i = 0; i < 18; i++) {
         const x = (((i * 97 + 41) % 1000) / 1000) * w;
-        const y = (((i * 53 + 17) % 1000) / 1000) * h * 0.55;
-        const r = 0.6 + (i % 3) * 0.4;
+        const y = (((i * 53 + 17) % 1000) / 1000) * h * 0.5;
+        const r = 0.45 + (i % 3) * 0.25;
         ctx.beginPath();
         ctx.arc(x, y, r, 0, Math.PI * 2);
         ctx.fill();

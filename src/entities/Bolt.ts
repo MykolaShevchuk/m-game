@@ -27,17 +27,19 @@ export class Bolt extends Entity {
 
   render(ctx: CanvasRenderingContext2D) {
     const r = this.w / 2;
-    ctx.save();
-    ctx.shadowColor = this.color;
-    ctx.shadowBlur = 12;
+    const cx = this.x + r;
+    const cy = this.y + r;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.2)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.5, r * 0.7, r * 0.25, 0, 0, Math.PI * 2);
+    ctx.fill();
     ctx.fillStyle = this.color;
     ctx.beginPath();
-    ctx.arc(this.x + r, this.y + r, r, 0, Math.PI * 2);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.fill();
-    ctx.fillStyle = '#fff8e1';
+    ctx.fillStyle = 'rgba(255, 248, 230, 0.45)';
     ctx.beginPath();
-    ctx.arc(this.x + r, this.y + r, r * 0.4, 0, Math.PI * 2);
+    ctx.ellipse(cx - r * 0.2, cy - r * 0.25, r * 0.35, r * 0.25, -0.4, 0, Math.PI * 2);
     ctx.fill();
-    ctx.restore();
   }
 }

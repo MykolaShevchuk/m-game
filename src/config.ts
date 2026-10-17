@@ -18,11 +18,11 @@ export const CONFIG = {
   dayNightPhase: 6 * 60,
   /** Full day+night cycles before players can fight each other. */
   pvpAfterFullDays: 2,
-  minimap: { width: 200, margin: 12 },
+  minimap: { width: 280, margin: 12 },
   colors: {
-    bg: '#1a1d26',
-    player: '#4fc3f7',
-    coin: '#ffd54f',
-    text: '#eceff1',
+    bg: '#1c2228',
+    player: '#4a90a8',
+    coin: '#c9a227',
+    text: '#e6e8ea',
   },
 } as const;

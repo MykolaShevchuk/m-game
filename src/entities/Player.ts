@@ -30,7 +30,8 @@ export class Player extends Entity {
 
   private regenTimer = 0;
   private invulnerable = 0;
-  private walkTime = 0;
+  /** Seconds spent moving; drives the walk cycle in drawCharacter. */
+  walkTime = 0;
 
   constructor(
     x: number,

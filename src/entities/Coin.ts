@@ -10,14 +10,26 @@ export class Coin extends Entity {
   }
 
   update(dt: number) {
-    this.t += dt * 4;
+    this.t += dt * 2;
   }
 
   render(ctx: CanvasRenderingContext2D) {
-    const r = this.w / 2;
+    const cx = this.x + this.w / 2;
+    const cy = this.y + this.h / 2;
+    const r = (this.w / 2) * (0.94 + Math.sin(this.t) * 0.04);
+
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.28)';
+    ctx.beginPath();
+    ctx.ellipse(cx, cy + r * 0.7, r * 0.7, r * 0.22, 0, 0, Math.PI * 2);
+    ctx.fill();
+
     ctx.fillStyle = CONFIG.colors.coin;
     ctx.beginPath();
-    ctx.arc(this.x + r, this.y + r, r * (0.85 + Math.sin(this.t) * 0.15), 0, Math.PI * 2);
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.fillStyle = 'rgba(232, 210, 140, 0.55)';
+    ctx.beginPath();
+    ctx.ellipse(cx - r * 0.2, cy - r * 0.25, r * 0.35, r * 0.22, -0.4, 0, Math.PI * 2);
     ctx.fill();
   }
 }

@@ -8,13 +8,13 @@ export interface ResourceDef {
 }
 
 export const RESOURCES: ResourceDef[] = [
-  { id: 'wood', name: 'Wood', color: '#a1704a' },
-  { id: 'stone', name: 'Stone', color: '#9ea4ab' },
-  { id: 'berries', name: 'Berries', color: '#d64561' },
-  { id: 'cactusFruit', name: 'Cactus Fruit', color: '#e05aa8' },
-  { id: 'shell', name: 'Shell', color: '#f4c9b0' },
-  { id: 'crystal', name: 'Crystal', color: '#7fe3ff' },
-  { id: 'obsidian', name: 'Obsidian', color: '#9b7cd6' },
+  { id: 'wood', name: 'Wood', color: '#8a6540' },
+  { id: 'stone', name: 'Stone', color: '#8e949a' },
+  { id: 'berries', name: 'Berries', color: '#b04052' },
+  { id: 'cactusFruit', name: 'Cactus Fruit', color: '#c4587a' },
+  { id: 'shell', name: 'Shell', color: '#d8b49a' },
+  { id: 'crystal', name: 'Crystal', color: '#6a9eb0' },
+  { id: 'obsidian', name: 'Obsidian', color: '#6a5880' },
 ];
 
 export const RESOURCE_BY_ID = Object.fromEntries(RESOURCES.map((r) => [r.id, r])) as Record<ResourceId, ResourceDef>;

@@ -192,6 +192,16 @@ function handleAction(room: Room, player: NetPlayer, action: ClientAction) {
     }
   }
 
+  if (action.kind === 'trade') {
+    const give = Object.entries(action.give) as [keyof Inventory, number][];
+    const get = Object.entries(action.get) as [keyof Inventory, number][];
+    if (give.some(([id, n]) => n <= 0 || !(id in player.inventory) || player.inventory[id] < n)) return;
+    if (get.some(([id, n]) => n <= 0 || !(id in player.inventory))) return;
+    for (const [id, n] of give) player.inventory[id] -= n;
+    for (const [id, n] of get) player.inventory[id] += n;
+    return;
+  }
+
   if (action.kind === 'hit') {
     if (room.dayElapsed < PVP_AFTER || !player.alive) return;
     const target = room.players.get(action.targetId);
