@@ -12,10 +12,9 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, def: CharacterDef, 
   ctx.ellipse(cx, cy + r * 0.85, r * 0.9, r * 0.35, 0, 0, Math.PI * 2);
   ctx.fill();
 
-  if (def.id === 'mage') drawStaff(ctx, cx + r * 0.85, cy, r, def.accent);
-  if (def.id === 'scout') drawBow(ctx, cx + r * 0.8, cy, r);
+  if (def.id === 'wizard') drawStaff(ctx, cx + r * 0.85, cy, r, def.accent);
 
-  ctx.fillStyle = def.color;
+  ctx.fillStyle = def.id === 'alien' ? def.accent : def.color;
   ctx.beginPath();
   ctx.arc(cx, cy + r * 0.2, r * 0.7, 0, Math.PI * 2);
   ctx.fill();
@@ -23,45 +22,78 @@ export function drawCharacter(ctx: CanvasRenderingContext2D, def: CharacterDef, 
 
   const headY = cy - r * 0.45;
   const headR = r * 0.38;
+
+  if (def.id === 'alien') {
+    drawAlienHead(ctx, cx, headY - r * 0.1, headR * 1.25, def.color);
+    ctx.restore();
+    return;
+  }
+
   ctx.fillStyle = def.id === 'knight' ? def.color : '#f1c9a0';
   ctx.beginPath();
   ctx.arc(cx, headY, headR, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
 
-  if (def.id === 'scout') drawHood(ctx, cx, headY, headR, def.accent);
   if (def.id === 'knight') {
     drawVisor(ctx, cx, headY, headR);
     drawShield(ctx, cx - r * 0.75, cy + r * 0.2, r, def.accent);
   }
-  if (def.id === 'mage') drawHat(ctx, cx, headY, headR, def.color);
+  if (def.id === 'wizard') {
+    drawBeard(ctx, cx, headY, headR);
+    drawHat(ctx, cx, headY, headR, def.color, def.accent);
+  }
 
   ctx.restore();
 }
 
-function drawHood(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string) {
-  ctx.fillStyle = color;
+function drawAlienHead(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, skin: string) {
+  ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
+  for (const side of [-1, 1]) {
+    const tipX = x + side * r * 0.9;
+    const tipY = y - r * 1.9;
+    ctx.beginPath();
+    ctx.moveTo(x + side * r * 0.35, y - r * 0.8);
+    ctx.quadraticCurveTo(x + side * r * 0.5, y - r * 1.6, tipX, tipY);
+    ctx.stroke();
+    ctx.fillStyle = '#ff5cf0';
+    ctx.shadowColor = '#ff5cf0';
+    ctx.shadowBlur = r * 0.6;
+    ctx.beginPath();
+    ctx.arc(tipX, tipY, r * 0.22, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.shadowBlur = 0;
+  }
+
+  ctx.fillStyle = skin;
   ctx.beginPath();
-  ctx.arc(x, y, r * 1.15, Math.PI * 0.95, Math.PI * 2.05);
-  ctx.lineTo(x + r * 0.2, y - r * 1.6);
-  ctx.closePath();
+  ctx.ellipse(x, y, r * 1.15, r * 1.05, 0, 0, Math.PI * 2);
   ctx.fill();
   ctx.stroke();
+
+  ctx.fillStyle = '#0e0e14';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.ellipse(x + side * r * 0.45, y + r * 0.1, r * 0.38, r * 0.22, side * 0.5, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  ctx.fillStyle = 'rgba(255, 255, 255, 0.85)';
+  for (const side of [-1, 1]) {
+    ctx.beginPath();
+    ctx.arc(x + side * r * 0.45 - r * 0.1, y + r * 0.02, r * 0.08, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
-function drawBow(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
-  ctx.strokeStyle = '#7a4a22';
-  ctx.lineWidth = Math.max(1.5, r / 6);
+function drawBeard(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.fillStyle = '#eef0f2';
   ctx.beginPath();
-  ctx.arc(x - r * 0.4, y, r * 0.8, -Math.PI / 2.4, Math.PI / 2.4);
+  ctx.moveTo(x - r * 0.85, y + r * 0.05);
+  ctx.quadraticCurveTo(x - r * 0.6, y + r * 1.4, x, y + r * 1.9);
+  ctx.quadraticCurveTo(x + r * 0.6, y + r * 1.4, x + r * 0.85, y + r * 0.05);
+  ctx.quadraticCurveTo(x, y + r * 0.45, x - r * 0.85, y + r * 0.05);
+  ctx.fill();
   ctx.stroke();
-  ctx.strokeStyle = 'rgba(255, 255, 255, 0.7)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  ctx.moveTo(x - r * 0.4 + Math.cos(-Math.PI / 2.4) * r * 0.8, y + Math.sin(-Math.PI / 2.4) * r * 0.8);
-  ctx.lineTo(x - r * 0.4 + Math.cos(Math.PI / 2.4) * r * 0.8, y + Math.sin(Math.PI / 2.4) * r * 0.8);
-  ctx.stroke();
-  ctx.strokeStyle = 'rgba(0, 0, 0, 0.7)';
 }
 
 function drawVisor(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
@@ -94,7 +126,7 @@ function drawShield(ctx: CanvasRenderingContext2D, x: number, y: number, r: numb
   ctx.fillRect(x - w * 0.35, y - h * 0.12, w * 0.7, h * 0.16);
 }
 
-function drawHat(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string) {
+function drawHat(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, color: string, star: string) {
   ctx.fillStyle = color;
   ctx.beginPath();
   ctx.ellipse(x, y - r * 0.55, r * 1.35, r * 0.35, 0, 0, Math.PI * 2);
@@ -107,6 +139,24 @@ function drawHat(ctx: CanvasRenderingContext2D, x: number, y: number, r: number,
   ctx.closePath();
   ctx.fill();
   ctx.stroke();
+  ctx.fillStyle = star;
+  for (const [sx, sy, s] of [
+    [-0.25, -1.0, 0.18],
+    [0.25, -1.5, 0.13],
+  ]) {
+    drawStar(ctx, x + sx * r, y + sy * r, s * r);
+  }
+}
+
+function drawStar(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const a = -Math.PI / 2 + (i * Math.PI) / 5;
+    const d = i % 2 === 0 ? r : r * 0.45;
+    ctx.lineTo(x + Math.cos(a) * d, y + Math.sin(a) * d);
+  }
+  ctx.closePath();
+  ctx.fill();
 }
 
 function drawStaff(ctx: CanvasRenderingContext2D, x: number, y: number, r: number, glow: string) {

@@ -1,4 +1,4 @@
-export type CharacterId = 'scout' | 'knight' | 'mage';
+export type CharacterId = 'alien' | 'knight' | 'wizard';
 
 export interface CharacterDef {
   id: CharacterId;
@@ -16,12 +16,12 @@ export interface CharacterDef {
 
 export const CHARACTERS: CharacterDef[] = [
   {
-    id: 'scout',
-    name: 'Scout',
-    description: 'Quick and nimble ranger',
+    id: 'alien',
+    name: 'Alien',
+    description: 'Speedy visitor from beyond',
     perk: 'Fastest, smallest hitbox',
-    color: '#5d8a3a',
-    accent: '#2f4f1f',
+    color: '#7bd66b',
+    accent: '#c7d2dc',
     speed: 330,
     size: 20,
     lives: 1,
@@ -40,9 +40,9 @@ export const CHARACTERS: CharacterDef[] = [
     magnet: 0,
   },
   {
-    id: 'mage',
-    name: 'Mage',
-    description: 'Wielder of arcane pull',
+    id: 'wizard',
+    name: 'Wizard',
+    description: 'Old master of arcane pull',
     perk: 'Coins fly to you',
     color: '#6a4c9c',
     accent: '#ffd54f',

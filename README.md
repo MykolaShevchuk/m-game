@@ -33,7 +33,7 @@ src/
     Entity.ts         Base class: position, size, alive flag
     Player.ts / Enemy.ts / Coin.ts
   scenes/
-    CharacterSelectScene.ts  Title + pick Scout, Knight or Mage
+    CharacterSelectScene.ts  Title + pick Alien, Knight or Wizard
     PlayScene.ts      Gameplay: spawning, collisions, score
     GameOverScene.ts  Result + restart
   world/
