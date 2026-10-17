@@ -1,3 +1,4 @@
+import { BUILDINGS, canAfford, spend, type BuildingDef } from '@/buildings';
 import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
 import { Camera } from '@/core/Camera';
@@ -5,9 +6,12 @@ import type { Game } from '@/core/Game';
 import { overlaps, type Rect } from '@/core/math';
 import type { Scene } from '@/core/Scene';
 import { Coin } from '@/entities/Coin';
+import { House } from '@/entities/House';
 import { Player } from '@/entities/Player';
 import { Resource } from '@/entities/Resource';
 import { emptyInventory, RESOURCE_BY_ID, rollResource } from '@/resources';
+import { drawBuildMenu } from '@/ui/buildMenu';
+import { drawHouse } from '@/ui/drawHouse';
 import { drawInventory } from '@/ui/inventory';
 import { drawMinimap } from '@/ui/minimap';
 import { Popups } from '@/ui/popups';
@@ -19,6 +23,7 @@ import { CharacterSelectScene } from './CharacterSelectScene';
 
 const MAGNET_SPEED = 320;
 const BANNER_TIME = 2.5;
+const PLACE_GAP = 18;
 
 export class PlayScene implements Scene {
   private map: WorldMap;
@@ -37,6 +42,9 @@ export class PlayScene implements Scene {
   private currentIsland = -1;
   private visited = new Set<number>();
   private banner = { text: '', time: 0 };
+  private houses: House[] = [];
+  private building = false;
+  private selectedBuilding = 0;
 
   constructor(
     private game: Game,
@@ -46,6 +54,7 @@ export class PlayScene implements Scene {
     this.map = new WorldMap(Math.floor(Math.random() * 2 ** 31));
     const spawn = this.map.spawnPoint(character.size);
     this.player = new Player(spawn.x, spawn.y, game.input, this.map, character);
+    this.player.blocked = (r) => this.houses.some((h) => overlaps(r, h));
     this.camera = new Camera(game.width, game.height, this.map.width, this.map.height);
     this.camera.follow(this.player, Infinity);
     this.refillCoins();
@@ -64,7 +73,10 @@ export class PlayScene implements Scene {
       return;
     }
 
-    if (this.game.input.wasPressed('KeyP', 'Escape')) this.paused = !this.paused;
+    if (this.game.input.wasPressed('KeyP', 'Escape')) {
+      this.paused = !this.paused;
+      if (this.paused) this.building = false;
+    }
     if (this.paused) {
       if (this.game.input.wasPressed('KeyC')) {
         this.game.scenes.switch(new CharacterSelectScene(this.game, this.characterIndex));
@@ -72,6 +84,7 @@ export class PlayScene implements Scene {
       return;
     }
 
+    this.updateBuild();
     this.player.update(dt);
     this.coins.forEach((c) => c.update(dt));
     this.resources.forEach((r) => r.update(dt));
@@ -91,6 +104,57 @@ export class PlayScene implements Scene {
     this.refillCoins();
     this.collectResources();
     this.checkUpgrade();
+  }
+
+  private updateBuild() {
+    const input = this.game.input;
+    if (input.wasPressed('KeyB')) this.building = !this.building;
+    if (!this.building) return;
+
+    const n = BUILDINGS.length;
+    if (input.wasPressed('KeyQ')) this.selectedBuilding = (this.selectedBuilding + n - 1) % n;
+    if (input.wasPressed('KeyE')) this.selectedBuilding = (this.selectedBuilding + 1) % n;
+    for (let i = 0; i < n; i++) {
+      if (input.wasPressed(`Digit${i + 1}`)) this.selectedBuilding = i;
+    }
+
+    if (input.wasPressed('Enter')) {
+      const def = BUILDINGS[this.selectedBuilding];
+      const spot = this.previewRect(def);
+      if (!this.canPlace(def, spot)) return;
+      spend(this.inventory, def);
+      this.houses.push(new House(spot.x, spot.y, def));
+      this.popups.add(`Built ${def.name}!`, def.roof, spot.x + def.w / 2, spot.y);
+    }
+  }
+
+  private previewRect(def: BuildingDef): Rect {
+    const p = this.player;
+    const fx = p.facing.x;
+    const fy = p.facing.y;
+    return {
+      x: p.x + p.w / 2 + fx * (p.w / 2 + PLACE_GAP + def.w / 2) - def.w / 2,
+      y: p.y + p.h / 2 + fy * (p.h / 2 + PLACE_GAP + def.h / 2) - def.h / 2,
+      w: def.w,
+      h: def.h,
+    };
+  }
+
+  private canPlace(def: BuildingDef, spot: Rect) {
+    if (!canAfford(this.inventory, def)) return false;
+    if (overlaps(spot, this.player)) return false;
+    if (this.houses.some((h) => overlaps(spot, h))) return false;
+    const step = 8;
+    for (let y = spot.y; y <= spot.y + spot.h; y += step) {
+      for (let x = spot.x; x <= spot.x + spot.w; x += step) {
+        if (this.map.islandAt(x, y) < 0) return false;
+      }
+    }
+    return this.map.islandAt(spot.x + spot.w, spot.y + spot.h) >= 0;
+  }
+
+  private isFree(x: number, y: number, size: number) {
+    return !this.houses.some((h) => overlaps(h, { x, y, w: size, h: size }));
   }
 
   // The current island is kept while crossing a bridge, so the banner only shows on arrival.
@@ -133,7 +197,7 @@ export class PlayScene implements Scene {
 
   private refillCoins() {
     while (this.coins.length < CONFIG.coin.count) {
-      const p = this.map.randomWalkablePoint(CONFIG.coin.size);
+      const p = this.map.randomWalkablePoint(CONFIG.coin.size, (x, y) => this.isFree(x, y, CONFIG.coin.size));
       if (!p) break;
       this.coins.push(new Coin(p.x, p.y));
     }
@@ -165,7 +229,7 @@ export class PlayScene implements Scene {
       const fewest = Math.min(...perIsland);
       if (fewest === Infinity) break;
       const island = perIsland.indexOf(fewest);
-      const p = this.map.randomWalkablePoint(size, (x, y) => islandOf(x, y) === island);
+      const p = this.map.randomWalkablePoint(size, (x, y) => islandOf(x, y) === island && this.isFree(x, y, size));
       if (!p) {
         perIsland[island] = Infinity;
         continue;
@@ -186,14 +250,20 @@ export class PlayScene implements Scene {
     ctx.translate(-cx, -cy);
     this.resources.forEach((r) => r.render(ctx));
     this.coins.forEach((c) => c.render(ctx));
-    this.player.render(ctx);
+    const sprites = [...this.houses, this.player].sort((a, b) => a.y + a.h - (b.y + b.h));
+    sprites.forEach((s) => s.render(ctx));
+    if (this.building) this.renderPreview(ctx);
     this.popups.render(ctx);
     ctx.restore();
 
-    drawMinimap(ctx, this.map, this.camera, this.player, this.coins);
+    drawMinimap(ctx, this.map, this.camera, this.player, this.coins, this.houses);
     this.renderHud(ctx);
     this.renderIslandInfo(ctx);
-    drawInventory(ctx, this.inventory);
+    if (this.building) {
+      drawBuildMenu(ctx, this.inventory, BUILDINGS[this.selectedBuilding]);
+    } else {
+      drawInventory(ctx, this.inventory);
+    }
     if (this.picker) {
       this.picker.render(ctx, w, h);
     } else if (this.paused) {
@@ -202,6 +272,18 @@ export class PlayScene implements Scene {
       drawText(ctx, 'C to change character', w / 2, h / 2 + 40, 16, 'center');
       ctx.globalAlpha = 1;
     }
+  }
+
+  private renderPreview(ctx: CanvasRenderingContext2D) {
+    const def = BUILDINGS[this.selectedBuilding];
+    const spot = this.previewRect(def);
+    const ok = this.canPlace(def, spot);
+    ctx.globalAlpha = 0.55;
+    drawHouse(ctx, def, spot.x, spot.y);
+    ctx.globalAlpha = 1;
+    ctx.strokeStyle = ok ? '#81c784' : '#ef5350';
+    ctx.lineWidth = 2;
+    ctx.strokeRect(spot.x - 1, spot.y - 1, spot.w + 2, spot.h + 2);
   }
 
   private renderIslandInfo(ctx: CanvasRenderingContext2D) {
@@ -230,7 +312,7 @@ export class PlayScene implements Scene {
 
   private renderHud(ctx: CanvasRenderingContext2D) {
     drawText(ctx, `Score: ${this.score}`, 16, 24);
-    drawText(ctx, `Lives: ${'♥'.repeat(Math.max(0, this.player.lives))}`, 16, 50);
+    drawText(ctx, `Houses: ${this.houses.length}   ·   B to build`, 16, 50);
 
     const barW = 160;
     const progress = 1 - (this.nextUpgradeAt - this.score) / CONFIG.upgradeEvery;

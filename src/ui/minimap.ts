@@ -9,6 +9,7 @@ export function drawMinimap(
   camera: Camera,
   player: Rect,
   coins: Rect[],
+  houses: Rect[] = [],
 ) {
   const w = CONFIG.minimap.width;
   const scale = w / map.width;
@@ -27,6 +28,8 @@ export function drawMinimap(
 
   ctx.fillStyle = CONFIG.colors.coin;
   for (const c of coins) ctx.fillRect(x + c.x * scale - 1, y + c.y * scale - 1, 2, 2);
+  ctx.fillStyle = '#c4a574';
+  for (const h of houses) ctx.fillRect(x + h.x * scale - 1.5, y + h.y * scale - 1.5, 3, 3);
   ctx.fillStyle = CONFIG.colors.player;
   ctx.fillRect(x + player.x * scale - 2, y + player.y * scale - 2, 4, 4);
   ctx.restore();

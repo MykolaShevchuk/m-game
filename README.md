@@ -11,7 +11,7 @@ npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build
 ```
 
-Controls: WASD / arrow keys to move, P / Esc to pause, Enter to start, C while paused to change character. The chosen character is remembered, so the select screen only appears on first launch.
+Controls: WASD / arrow keys to move, P / Esc to pause, Enter to start, C while paused to change character, B to build (1-5 to choose a house, Enter to place). The chosen character is remembered, so the select screen only appears on first launch.
 
 ## Structure
 
@@ -24,6 +24,7 @@ src/
   characters.ts       Playable characters: stats and perks
   upgrades.ts         Per-character upgrade pools offered every CONFIG.upgradeEvery points
   resources.ts        Collectible resource types and per-island-theme spawn weights
+  buildings.ts        House types and resource costs
   core/
     Game.ts           Canvas setup + fixed-timestep game loop
     Camera.ts         Smooth follow camera, clamped to the world
@@ -35,6 +36,7 @@ src/
     Entity.ts         Base class: position, size, alive flag
     Player.ts / Coin.ts
     Resource.ts       Resource pickup (wood, stone, crystal...) lying on an island
+    House.ts          Placed building that blocks movement
   scenes/
     CharacterSelectScene.ts  Title + pick Alien, Knight or Wizard
     PlayScene.ts      Gameplay: spawning, collisions, score
@@ -48,6 +50,8 @@ src/
     drawCharacter.ts  Procedural character art (used in select screen and in game)
     drawResource.ts   Procedural resource icons
     inventory.ts      Bottom-left inventory bar with resource counts
+    drawHouse.ts      Procedural house art
+    buildMenu.ts      Build-mode panel with costs
     popups.ts         Floating "+1 Wood" labels
     minimap.ts        Overview map with camera frame, player and coins
     UpgradePicker.ts  "Level up" overlay: pick 1 of 3 upgrades

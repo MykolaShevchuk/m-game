@@ -1,5 +1,6 @@
 import type { CharacterDef } from '@/characters';
 import type { Input } from '@/core/Input';
+import type { Rect } from '@/core/math';
 import { drawCharacter } from '@/ui/drawCharacter';
 import type { WorldMap } from '@/world/WorldMap';
 import { Entity } from './Entity';
@@ -19,10 +20,13 @@ export class Player extends Entity {
   regenEvery = 0;
   fireballEvery = 0;
 
+  /** Extra occupancy check, e.g. houses. */
+  blocked: (r: Rect) => boolean = () => false;
+  facing = { x: 0, y: 1 };
+
   private regenTimer = 0;
   private invulnerable = 0;
   private walkTime = 0;
-  private facing = { x: 0, y: 1 };
 
   constructor(
     x: number,
@@ -63,9 +67,9 @@ export class Player extends Entity {
     const { x, y } = this.input.axis();
     if (x || y) this.facing = { x, y };
     const nx = this.x + x * this.speed * dt;
-    if (this.map.isAreaWalkable({ x: nx, y: this.y, w: this.w, h: this.h })) this.x = nx;
+    if (this.canStand({ x: nx, y: this.y, w: this.w, h: this.h })) this.x = nx;
     const ny = this.y + y * this.speed * dt;
-    if (this.map.isAreaWalkable({ x: this.x, y: ny, w: this.w, h: this.h })) this.y = ny;
+    if (this.canStand({ x: this.x, y: ny, w: this.w, h: this.h })) this.y = ny;
     this.walkTime = x || y ? this.walkTime + dt : 0;
 
     if (this.blinkRange > 0 && this.blinkTimer === 0 && this.input.wasPressed('Space')) this.blink();
@@ -81,12 +85,16 @@ export class Player extends Entity {
     }
   }
 
+  private canStand(r: Rect) {
+    return this.map.isAreaWalkable(r) && !this.blocked(r);
+  }
+
   // Lands on the farthest walkable spot along the facing direction, up to blinkRange.
   private blink() {
     for (let d = this.blinkRange; d > 0; d -= 8) {
       const x = this.x + this.facing.x * d;
       const y = this.y + this.facing.y * d;
-      if (this.map.isAreaWalkable({ x, y, w: this.w, h: this.h })) {
+      if (this.canStand({ x, y, w: this.w, h: this.h })) {
         this.x = x;
         this.y = y;
         this.blinkTimer = this.blinkCooldown;
