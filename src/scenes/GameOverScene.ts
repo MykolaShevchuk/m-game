@@ -3,7 +3,7 @@ import type { Scene } from '@/core/Scene';
 import { loadHighScore, saveHighScore } from '@/core/storage';
 import { pointIn } from '@/ui/hit';
 import { drawText } from '@/ui/text';
-import { ModeSelectScene } from './ModeSelectScene';
+import { MainMenuScene } from './MainMenuScene';
 
 export class GameOverScene implements Scene {
   constructor(
@@ -17,28 +17,25 @@ export class GameOverScene implements Scene {
     saveHighScore(this.score);
   }
 
+  private toMenu() {
+    this.game.scenes.switch(new MainMenuScene(this.game));
+  }
+
   update() {
     const input = this.game.input;
     const { width: w, height: h } = this.game;
     const tap = input.peekTap();
     if (tap) {
-      if (pointIn(tap, w / 2 - 200, h / 2 + 20, 400, 40)) {
+      if (pointIn(tap, w / 2 - 200, h / 2 + 20, 400, 80)) {
         input.consumeTap();
-        this.game.scenes.switch(new ModeSelectScene(this.game));
-        return;
-      }
-      if (pointIn(tap, w / 2 - 200, h / 2 + 60, 400, 40)) {
-        input.consumeTap();
-        this.game.scenes.switch(new ModeSelectScene(this.game));
+        this.toMenu();
         return;
       }
       input.consumeTap();
-      this.game.scenes.switch(new ModeSelectScene(this.game));
+      this.toMenu();
       return;
     }
-    if (input.wasPressed('Enter', 'Space', 'KeyC')) {
-      this.game.scenes.switch(new ModeSelectScene(this.game));
-    }
+    if (input.wasPressed('Enter', 'Space', 'KeyC', 'Escape')) this.toMenu();
   }
 
   render(ctx: CanvasRenderingContext2D) {
@@ -48,9 +45,9 @@ export class GameOverScene implements Scene {
     drawText(ctx, this.title, cx, cy - 50, 48, 'center');
     drawText(ctx, `Score: ${this.score}   ·   Best: ${loadHighScore()}`, cx, cy + 10, 22, 'center');
     if (touch) {
-      drawText(ctx, 'Tap for modes', cx, cy + 50, 18, 'center');
+      drawText(ctx, 'Tap for main menu', cx, cy + 50, 18, 'center');
     } else {
-      drawText(ctx, 'Enter / C — back to modes', cx, cy + 50, 18, 'center');
+      drawText(ctx, 'Enter / C — main menu', cx, cy + 50, 18, 'center');
     }
   }
 }

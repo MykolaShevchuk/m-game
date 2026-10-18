@@ -56,51 +56,61 @@ const DEALS: Record<string, Deal[]> = {
     ['wood', 3, 'stone', 1],
     ['berries', 4, 'crystal', 1],
     ['wood', 2, 'berries', 1],
+    ['wood', 3, 'bread', 1],
   ],
   'Pine Isle': [
     ['wood', 3, 'stone', 1],
     ['wood', 4, 'crystal', 1],
     ['stone', 3, 'berries', 2],
+    ['wood', 3, 'bread', 1],
   ],
   'Dune Isle': [
     ['cactusFruit', 3, 'wood', 1],
     ['cactusFruit', 2, 'stone', 1],
     ['cactusFruit', 4, 'shell', 1],
+    ['cactusFruit', 2, 'bread', 1],
   ],
   'Palm Isle': [
     ['shell', 3, 'wood', 1],
     ['shell', 2, 'berries', 1],
     ['shell', 4, 'crystal', 1],
+    ['shell', 2, 'bread', 1],
   ],
   'Frost Isle': [
     ['crystal', 1, 'wood', 2],
     ['crystal', 1, 'stone', 2],
     ['crystal', 2, 'obsidian', 1],
+    ['crystal', 1, 'bread', 1],
   ],
   'Ember Isle': [
     ['obsidian', 1, 'stone', 2],
     ['obsidian', 1, 'crystal', 1],
     ['obsidian', 2, 'wood', 3],
+    ['stone', 3, 'bread', 1],
   ],
   'Amber Isle': [
     ['wood', 3, 'stone', 1],
     ['berries', 4, 'crystal', 1],
     ['wood', 4, 'obsidian', 1],
+    ['berries', 2, 'bread', 1],
   ],
   'Blossom Isle': [
     ['berries', 3, 'wood', 1],
     ['berries', 4, 'crystal', 1],
     ['berries', 5, 'shell', 1],
+    ['berries', 2, 'bread', 1],
   ],
   'Mire Isle': [
     ['wood', 3, 'stone', 1],
     ['berries', 3, 'wood', 1],
     ['wood', 5, 'crystal', 1],
+    ['berries', 2, 'bread', 1],
   ],
   'Mesa Isle': [
     ['stone', 3, 'wood', 1],
     ['cactusFruit', 3, 'obsidian', 1],
     ['stone', 4, 'crystal', 1],
+    ['cactusFruit', 2, 'bread', 1],
   ],
 };
 
@@ -108,6 +118,7 @@ const FALLBACK: Deal[] = [
   ['wood', 3, 'stone', 1],
   ['stone', 3, 'wood', 1],
   ['berries', 4, 'crystal', 1],
+  ['wood', 3, 'bread', 1],
 ];
 
 export function villageName(theme: IslandTheme) {
@@ -146,10 +157,18 @@ export function rgbCss(c: [number, number, number], k = 1) {
   return `rgb(${Math.round(c[0] * k)}, ${Math.round(c[1] * k)}, ${Math.round(c[2] * k)})`;
 }
 
+function rgbHex(c: [number, number, number], k = 1) {
+  const ch = (n: number) =>
+    Math.min(255, Math.max(0, Math.round(n * k)))
+      .toString(16)
+      .padStart(2, '0');
+  return `#${ch(c[0])}${ch(c[1])}${ch(c[2])}`;
+}
+
 export function hutColors(theme: IslandTheme): Pick<VillageHut, 'wall' | 'roof' | 'trim'> {
   return {
-    wall: rgbCss(theme.sand, 0.88),
-    roof: rgbCss(theme.forest, 0.78),
-    trim: rgbCss(theme.rockLow, 0.85),
+    wall: rgbHex(theme.sand, 0.88),
+    roof: rgbHex(theme.forest, 0.78),
+    trim: rgbHex(theme.rockLow, 0.85),
   };
 }

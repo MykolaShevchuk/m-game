@@ -1,6 +1,6 @@
 import { CONFIG } from '@/config';
 import type { Inventory } from '@/resources';
-import { TROOPS, canAffordTroop, troopCostList, type TroopDef } from '@/troops';
+import { canAffordTroop, troopCostList, type TroopDef } from '@/troops';
 import { drawResource } from './drawResource';
 import { drawText } from './text';
 import { drawTroop } from './drawTroop';
@@ -10,11 +10,11 @@ const CARD_W = 140;
 const CARD_H = 120;
 const GAP = 10;
 
-export function troopMenuCards(layout: MenuLayout = {}): MenuCardHit[] {
+export function troopMenuCards(troops: TroopDef[], layout: MenuLayout = {}): MenuCardHit[] {
   const originX = layout.originX ?? 0;
   const viewW = layout.viewW ?? CONFIG.width;
   const viewH = layout.viewH ?? CONFIG.height;
-  const n = TROOPS.length;
+  const n = Math.max(1, troops.length);
   const maxW = viewW - 16;
   const natural = n * CARD_W + (n - 1) * GAP + 16;
   const scale = Math.min(1, maxW / natural);
@@ -25,7 +25,7 @@ export function troopMenuCards(layout: MenuLayout = {}): MenuCardHit[] {
   const x = originX + (viewW - w) / 2;
   const y = viewH - h - 12;
   const cardH = CARD_H * scale - 8 * scale;
-  return TROOPS.map((_, i) => ({
+  return troops.map((_, i) => ({
     index: i,
     x: x + 8 * scale + i * (cardW + gap),
     y: y + 26 * scale,
@@ -37,13 +37,14 @@ export function troopMenuCards(layout: MenuLayout = {}): MenuCardHit[] {
 export function drawTroopMenu(
   ctx: CanvasRenderingContext2D,
   inventory: Inventory,
+  troops: TroopDef[],
   selected: TroopDef,
   layout: MenuLayout = {},
 ) {
   const originX = layout.originX ?? 0;
   const viewW = layout.viewW ?? CONFIG.width;
   const viewH = layout.viewH ?? CONFIG.height;
-  const n = TROOPS.length;
+  const n = Math.max(1, troops.length);
   const maxW = viewW - 16;
   const natural = n * CARD_W + (n - 1) * GAP + 16;
   const scale = Math.min(1, maxW / natural);
@@ -62,14 +63,16 @@ export function drawTroopMenu(
   ctx.fill();
   drawText(
     ctx,
-    touch ? `Recruit  ·  tap to hire  ·  ${close}` : `Recruit  ·  1-3  ·  Enter  ·  ${close}`,
+    touch
+      ? `Recruit  ·  tap to hire  ·  ${close}`
+      : `Recruit  ·  1-${troops.length}  ·  Enter  ·  ${close}`,
     originX + viewW / 2,
     y + 14 * scale,
     Math.max(10, 12 * scale),
     'center',
   );
 
-  TROOPS.forEach((t, i) => {
+  troops.forEach((t, i) => {
     const cx = x + 8 * scale + i * (cardW + gap);
     const cy = y + 26 * scale;
     const active = t.id === selected.id;

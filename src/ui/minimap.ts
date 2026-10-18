@@ -9,6 +9,7 @@ export interface MinimapLayout {
   width?: number;
   players?: { rect: Rect; color: string }[];
   villages?: Rect[];
+  chests?: Rect[];
 }
 
 export function drawMinimap(
@@ -44,6 +45,10 @@ export function drawMinimap(
   ctx.fillStyle = '#e8c36a';
   for (const v of layout.villages ?? []) {
     ctx.fillRect(x + (v.x + v.w / 2) * scale - 2, y + (v.y + v.h / 2) * scale - 2, 4, 4);
+  }
+  ctx.fillStyle = '#f0d060';
+  for (const c of layout.chests ?? []) {
+    ctx.fillRect(x + (c.x + c.w / 2) * scale - 2.5, y + (c.y + c.h / 2) * scale - 2.5, 5, 5);
   }
 
   const extras = layout.players;

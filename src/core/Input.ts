@@ -6,17 +6,30 @@ export interface PlayerControls {
   interactPressed(): boolean;
   buildPressed(): boolean;
   blinkPressed(): boolean;
+  eatPressed(): boolean;
 }
 
 const P1_MOVE = { left: 'KeyA', right: 'KeyD', up: 'KeyW', down: 'KeyS' } as const;
 const P2_MOVE = { left: 'ArrowLeft', right: 'ArrowRight', up: 'ArrowUp', down: 'ArrowDown' } as const;
 
-const ACTION_KEYS: Record<string, string> = {
-  interact: 'KeyF',
-  build: 'KeyB',
-  blink: 'Space',
-  pause: 'Escape',
-  confirm: 'Enter',
+/** Touch action → key code per local player slot. */
+const SLOT_ACTIONS: Record<PlayerSlot, Record<string, string>> = {
+  0: {
+    interact: 'KeyF',
+    build: 'KeyB',
+    blink: 'Space',
+    eat: 'KeyR',
+    pause: 'Escape',
+    confirm: 'Enter',
+  },
+  1: {
+    interact: 'KeyM',
+    build: 'KeyK',
+    blink: 'ShiftRight',
+    eat: 'KeyN',
+    pause: 'Escape',
+    confirm: 'Enter',
+  },
 };
 
 export interface Point {
@@ -24,30 +37,39 @@ export interface Point {
   y: number;
 }
 
-type StickHandler = {
+export type StickHandler = {
   contains(x: number, y: number): boolean;
   setAxis(axis: Point | null): void;
 };
 
-type ButtonHandler = {
+export type ButtonHandler = {
   contains(x: number, y: number): boolean;
   action: string;
 };
 
+export type TouchPadHandler = {
+  slot: PlayerSlot;
+  stick: StickHandler;
+  buttons: ButtonHandler[];
+};
+
 /**
- * Keyboard + pointer input. Touch devices get a virtual stick/buttons via
- * {@link setTouchHandlers}; menus use {@link consumeTap} / {@link tapIn}.
+ * Keyboard + pointer input. Touch devices get virtual stick/buttons via
+ * {@link setTouchPads}; menus use {@link consumeTap} / {@link tapIn}.
  */
 export class Input {
   private down = new Set<string>();
   private pressed = new Set<string>();
   private taps: Point[] = [];
-  private stickAxis: Point = { x: 0, y: 0 };
-  private stickPointerId: number | null = null;
+  private stickAxes: [Point, Point] = [
+    { x: 0, y: 0 },
+    { x: 0, y: 0 },
+  ];
+  /** pointerId → which player's stick is dragging. */
+  private stickPointers = new Map<number, PlayerSlot>();
   private buttonPointers = new Map<number, string>();
   private pendingTap: { id: number; x: number; y: number } | null = null;
-  private stickHandler: StickHandler | null = null;
-  private buttonHandlers: ButtonHandler[] = [];
+  private pads: TouchPadHandler[] = [];
   private touchUi = false;
 
   readonly touchPreferred: boolean;
@@ -70,7 +92,7 @@ export class Input {
     target.addEventListener('keyup', (e) => this.down.delete(e.code));
     target.addEventListener('blur', () => {
       this.down.clear();
-      this.clearStick();
+      this.clearAllSticks();
     });
 
     canvas.addEventListener('pointerdown', this.onPointerDown);
@@ -80,13 +102,21 @@ export class Input {
     canvas.style.touchAction = 'none';
   }
 
-  /** Enable/disable on-screen stick & buttons (PlayScene). */
-  setTouchUi(enabled: boolean) {
-    this.touchUi = enabled && this.touchPreferred;
+  /**
+   * Enable/disable on-screen sticks & buttons (PlayScene).
+   * Pass `force: true` so pads show even on desktop (needed for local split-screen).
+   */
+  setTouchUi(enabled: boolean, opts: { force?: boolean } = {}) {
+    if (!enabled) {
+      this.touchUi = false;
+      this.pads = [];
+      this.clearAllSticks();
+      return;
+    }
+    this.touchUi = this.touchPreferred || !!opts.force;
     if (!this.touchUi) {
-      this.stickHandler = null;
-      this.buttonHandlers = [];
-      this.clearStick();
+      this.pads = [];
+      this.clearAllSticks();
     }
   }
 
@@ -94,9 +124,14 @@ export class Input {
     return this.touchUi;
   }
 
+  /** One pad per local player (solo = 1, split co-op = 2). */
+  setTouchPads(pads: TouchPadHandler[]) {
+    this.pads = pads;
+  }
+
+  /** @deprecated Prefer {@link setTouchPads}. */
   setTouchHandlers(stick: StickHandler | null, buttons: ButtonHandler[]) {
-    this.stickHandler = stick;
-    this.buttonHandlers = buttons;
+    this.pads = stick ? [{ slot: 0, stick, buttons }] : [];
   }
 
   private toCanvas(e: PointerEvent): Point {
@@ -112,9 +147,10 @@ export class Input {
   private onPointerDown = (e: PointerEvent) => {
     const p = this.toCanvas(e);
     if (this.touchUi) {
-      for (const b of this.buttonHandlers) {
-        if (b.contains(p.x, p.y)) {
-          const code = ACTION_KEYS[b.action] ?? b.action;
+      for (const pad of this.pads) {
+        for (const b of pad.buttons) {
+          if (!b.contains(p.x, p.y)) continue;
+          const code = SLOT_ACTIONS[pad.slot][b.action] ?? b.action;
           if (!this.down.has(code)) this.pressed.add(code);
           this.down.add(code);
           this.buttonPointers.set(e.pointerId, code);
@@ -127,9 +163,14 @@ export class Input {
           return;
         }
       }
-      if (this.stickHandler?.contains(p.x, p.y)) {
-        this.stickPointerId = e.pointerId;
-        this.stickHandler.setAxis(p);
+      for (const pad of this.pads) {
+        if (!pad.stick.contains(p.x, p.y)) continue;
+        // One stick finger per player.
+        for (const [, slot] of this.stickPointers) {
+          if (slot === pad.slot) return;
+        }
+        this.stickPointers.set(e.pointerId, pad.slot);
+        pad.stick.setAxis(p);
         try {
           this.canvas.setPointerCapture(e.pointerId);
         } catch {
@@ -151,8 +192,10 @@ export class Input {
 
   private onPointerMove = (e: PointerEvent) => {
     const p = this.toCanvas(e);
-    if (e.pointerId === this.stickPointerId) {
-      this.stickHandler?.setAxis(p);
+    const slot = this.stickPointers.get(e.pointerId);
+    if (slot != null) {
+      const pad = this.pads.find((t) => t.slot === slot);
+      pad?.stick.setAxis(p);
       e.preventDefault();
       return;
     }
@@ -170,8 +213,9 @@ export class Input {
       this.buttonPointers.delete(e.pointerId);
     }
 
-    if (e.pointerId === this.stickPointerId) {
-      this.clearStick();
+    const slot = this.stickPointers.get(e.pointerId);
+    if (slot != null) {
+      this.clearStick(slot, e.pointerId);
       e.preventDefault();
       return;
     }
@@ -182,19 +226,34 @@ export class Input {
     }
   };
 
-  private clearStick() {
-    this.stickPointerId = null;
-    this.stickAxis = { x: 0, y: 0 };
-    this.stickHandler?.setAxis(null);
+  private clearStick(slot: PlayerSlot, pointerId?: number) {
+    if (pointerId != null) this.stickPointers.delete(pointerId);
+    else {
+      for (const [id, s] of [...this.stickPointers]) {
+        if (s === slot) this.stickPointers.delete(id);
+      }
+    }
+    this.stickAxes[slot] = { x: 0, y: 0 };
+    const pad = this.pads.find((t) => t.slot === slot);
+    pad?.stick.setAxis(null);
   }
 
-  /** Used by TouchControls stick handler to push axis into Input. */
-  setStickAxis(axis: Point | null) {
-    this.stickAxis = axis ?? { x: 0, y: 0 };
+  private clearAllSticks() {
+    this.stickPointers.clear();
+    this.stickAxes = [
+      { x: 0, y: 0 },
+      { x: 0, y: 0 },
+    ];
+    for (const pad of this.pads) pad.stick.setAxis(null);
   }
 
-  getStickAxis(): Point {
-    return this.stickAxis;
+  /** Push stick axis for a player pad. */
+  setStickAxis(slot: PlayerSlot, axis: Point | null) {
+    this.stickAxes[slot] = axis ?? { x: 0, y: 0 };
+  }
+
+  getStickAxis(slot: PlayerSlot = 0): Point {
+    return this.stickAxes[slot];
   }
 
   isDown(...codes: string[]) {
@@ -223,11 +282,16 @@ export class Input {
     return this.taps[0] ?? null;
   }
 
-  /** Combined WASD + arrows + virtual stick (menus / solo). */
+  private stickActive(slot: PlayerSlot) {
+    const a = this.stickAxes[slot];
+    if (a.x !== 0 || a.y !== 0) return true;
+    for (const [, s] of this.stickPointers) if (s === slot) return true;
+    return false;
+  }
+
+  /** Combined WASD + arrows + P1 stick (menus / solo). */
   axis() {
-    if (this.stickPointerId != null || (this.stickAxis.x !== 0 || this.stickAxis.y !== 0)) {
-      return { ...this.stickAxis };
-    }
+    if (this.stickActive(0)) return { ...this.stickAxes[0] };
     return this.axisFrom(
       P1_MOVE.left,
       P1_MOVE.right,
@@ -247,29 +311,33 @@ export class Input {
       interactPressed: () => this.wasPressed('KeyF'),
       buildPressed: () => this.wasPressed('KeyB'),
       blinkPressed: () => this.wasPressed('Space'),
+      eatPressed: () => this.wasPressed('KeyR'),
     };
   }
 
-  /** Controls for local co-op slot 0 (WASD + touch) or 1 (arrows). */
+  /** Controls for local co-op slot 0 or 1 (keyboard + that player's touch pad). */
   slot(slot: PlayerSlot): PlayerControls {
     if (slot === 0) {
       return {
         axis: () => {
-          if (this.stickPointerId != null || this.stickAxis.x !== 0 || this.stickAxis.y !== 0) {
-            return { ...this.stickAxis };
-          }
+          if (this.stickActive(0)) return { ...this.stickAxes[0] };
           return this.axisFrom(P1_MOVE.left, P1_MOVE.right, P1_MOVE.up, P1_MOVE.down);
         },
         interactPressed: () => this.wasPressed('KeyF'),
         buildPressed: () => this.wasPressed('KeyB'),
         blinkPressed: () => this.wasPressed('Space'),
+        eatPressed: () => this.wasPressed('KeyR'),
       };
     }
     return {
-      axis: () => this.axisFrom(P2_MOVE.left, P2_MOVE.right, P2_MOVE.up, P2_MOVE.down),
+      axis: () => {
+        if (this.stickActive(1)) return { ...this.stickAxes[1] };
+        return this.axisFrom(P2_MOVE.left, P2_MOVE.right, P2_MOVE.up, P2_MOVE.down);
+      },
       interactPressed: () => this.wasPressed('KeyM'),
       buildPressed: () => this.wasPressed('KeyK'),
       blinkPressed: () => this.wasPressed('ShiftRight'),
+      eatPressed: () => this.wasPressed('KeyN'),
     };
   }
 

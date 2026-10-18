@@ -1,13 +1,24 @@
 import { Music } from '@/audio/Music';
-import { BUILDINGS, canAfford, spend, type BuildingDef } from '@/buildings';
+import {
+  BUILD_MENU,
+  BUILDING_BY_ID,
+  BUILDINGS,
+  canAfford,
+  findMansionCluster,
+  mansionPlacement,
+  spend,
+  type BuildingDef,
+} from '@/buildings';
 import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
 import { Camera } from '@/core/Camera';
 import type { Game } from '@/core/Game';
-import type { PlayerControls, PlayerSlot } from '@/core/Input';
+import type { PlayerControls, PlayerSlot, TouchPadHandler } from '@/core/Input';
 import { overlaps, type Rect } from '@/core/math';
+import { loadTutorialDone, saveTutorialDone } from '@/core/storage';
 import type { Scene } from '@/core/Scene';
 import { Bolt } from '@/entities/Bolt';
+import { Chest, CHEST_SIZE } from '@/entities/Chest';
 import { Coin } from '@/entities/Coin';
 import { House } from '@/entities/House';
 import { Player } from '@/entities/Player';
@@ -17,9 +28,18 @@ import { Village } from '@/entities/Village';
 import type { NetClient } from '@/net/NetClient';
 import type { GameStateSnap, ServerMsg } from '@/net/protocol';
 import { grantReward, QuestTracker, rewardList, type QuestDef } from '@/quests';
-import { emptyInventory, RESOURCE_BY_ID, rollResource, type Inventory } from '@/resources';
-import { TROOPS, canAffordTroop, spendTroop } from '@/troops';
+import {
+  emptyInventory,
+  RESOURCE_BY_ID,
+  rollResource,
+  takeFood,
+  type Inventory,
+  type ResourceId,
+} from '@/resources';
+import { canAffordTroop, spendTroop, troopsFor } from '@/troops';
 import { buildMenuCards, drawBuildMenu } from '@/ui/buildMenu';
+import { drawSwingFx, type SwingFx } from '@/ui/combatFx';
+import { ATTACK_POSE } from '@/ui/drawCharacter';
 import { drawHouse } from '@/ui/drawHouse';
 import { pointIn } from '@/ui/hit';
 import { drawInventory, inventoryHeight } from '@/ui/inventory';
@@ -27,18 +47,35 @@ import { drawMinimap } from '@/ui/minimap';
 import { Popups } from '@/ui/popups';
 import { drawQuestPanel } from '@/ui/questPanel';
 import { drawText } from '@/ui/text';
-import { drawTouchControls, touchBottomPad, touchLayout } from '@/ui/touchControls';
+import {
+  drawTouchControls,
+  pointInStickHit,
+  touchBottomPad,
+  touchLayout,
+  type TouchLayout,
+} from '@/ui/touchControls';
 import { drawTradeMenu, tradeMenuCards } from '@/ui/tradeMenu';
 import { drawTroopMenu, troopMenuCards } from '@/ui/troopMenu';
 import { applyOffer, canAffordOffer, VILLAGE_TRADE_RANGE } from '@/villages';
+import { Tutorial } from '@/ui/tutorial';
 import { UpgradePicker } from '@/ui/UpgradePicker';
 import { rollUpgrades, type RunModifiers, type Upgrade } from '@/upgrades';
 import { DayNight, formatClock } from '@/world/dayNight';
 import { WorldMap } from '@/world/WorldMap';
 import { GameOverScene } from './GameOverScene';
-import { ModeSelectScene } from './ModeSelectScene';
+import { MainMenuScene } from './MainMenuScene';
 
 const PRE_PVP_THEME = `${import.meta.env.BASE_URL}audio/blueprint_of_a_kingdom.mp3`;
+const PVP_THEME = `${import.meta.env.BASE_URL}audio/under_iron_skies.mp3`;
+
+function hungerColor(h: number) {
+  if (h > 0.5) {
+    const t = (h - 0.5) * 2;
+    return `rgb(${Math.round(255 - 126 * t)}, ${Math.round(193 + 3 * t)}, ${Math.round(7 + 125 * t)})`;
+  }
+  const t = h * 2;
+  return `rgb(${Math.round(239 + 16 * t)}, ${Math.round(83 + 110 * t)}, ${Math.round(80 - 73 * t)})`;
+}
 
 const MAGNET_SPEED = 320;
 const BANNER_TIME = 2.5;
@@ -46,6 +83,42 @@ const PLACE_GAP = 18;
 /** Must clear the largest building half-size + place gap. */
 const INTERACT_RANGE = 88;
 const BOLT_SPEED = 460;
+/** Followers only strike when an enemy is this close to their owner. */
+const TROOP_PROTECT_RANGE = 96;
+/** Barracks battle-line spacing / stand-off from the building. */
+const FORM_SPACING = 24;
+const FORM_FORWARD = 40;
+const CHEST_COUNT = 3;
+const CHEST_MIN_SPREAD = 900;
+/** Coins + stacked resource piles dumped when a chest opens. */
+const CHEST_COINS = 18;
+const CHEST_LOOT: ResourceId[] = [
+  'wood',
+  'wood',
+  'wood',
+  'wood',
+  'wood',
+  'wood',
+  'stone',
+  'stone',
+  'stone',
+  'stone',
+  'stone',
+  'crystal',
+  'crystal',
+  'crystal',
+  'obsidian',
+  'obsidian',
+  'berries',
+  'berries',
+  'berries',
+  'berries',
+  'shell',
+  'shell',
+  'cactusFruit',
+  'bread',
+  'bread',
+];
 
 interface Agent {
   id: number;
@@ -85,6 +158,7 @@ export class PlayScene implements Scene {
   private agents: Agent[] = [];
   private coins: Coin[] = [];
   private resources: Resource[] = [];
+  private chests: Chest[] = [];
   private popups = new Popups();
   private paused = false;
   private banner = { text: '', time: 0 };
@@ -98,13 +172,17 @@ export class PlayScene implements Scene {
   private localNetId: string | null;
   private menuOwner: Agent | null = null;
   private netStatus = '';
-  private touchLayout = touchLayout(CONFIG.width, CONFIG.height);
+  private touchLayouts: TouchLayout[] = [touchLayout(CONFIG.width, CONFIG.height, { slot: 0 })];
+  /** Floating joystick origins while fingers drag (one per local player). */
+  private stickOrigins: [{ x: number; y: number } | null, { x: number; y: number } | null] = [null, null];
   private combatEnded = false;
   private endTimer = 0;
   private bolts: Bolt[] = [];
-  private swings: { x: number; y: number; angle: number; range: number; cone: number; color: string; age: number; life: number }[] = [];
-  private music = new Music(PRE_PVP_THEME);
-  private musicStopped = false;
+  private swings: SwingFx[] = [];
+  private prePvpMusic = new Music(PRE_PVP_THEME);
+  private pvpMusic = new Music(PVP_THEME);
+  private pvpThemeStarted = false;
+  private tutorial: Tutorial | null = null;
 
   constructor(
     private game: Game,
@@ -115,6 +193,8 @@ export class PlayScene implements Scene {
     this.splitScreen = !!opts.splitScreen && opts.characters.length > 1;
     this.net = opts.net ?? null;
     this.localNetId = opts.localNetId ?? null;
+    // Skip the overlay tutorial in split co-op so both screen pads show immediately.
+    this.tutorial = this.splitScreen || loadTutorialDone() ? null : new Tutorial();
 
     const seed = opts.seed ?? Math.floor(Math.random() * 2 ** 31);
     this.map = new WorldMap(seed);
@@ -173,11 +253,12 @@ export class PlayScene implements Scene {
     if (!this.net) {
       this.refillCoins();
       this.refillResources();
+      this.spawnChests();
     } else {
       this.net.onMessage = (msg) => this.onNet(msg);
       this.net.onClose = () => {
         this.netStatus = 'Disconnected';
-        this.game.scenes.switch(new ModeSelectScene(this.game));
+        this.game.scenes.switch(new MainMenuScene(this.game));
       };
       this.net.flush();
     }
@@ -191,22 +272,26 @@ export class PlayScene implements Scene {
   }
 
   enter() {
-    this.game.input.setTouchUi(true);
+    // Split co-op: always show a stick+buttons pad on each half (desktop too).
+    this.game.input.setTouchUi(true, { force: this.splitScreen });
     this.syncTouchHandlers();
-    if (!this.dayNight.pvpActive) void this.music.play();
+    if (this.dayNight.pvpActive) void this.pvpMusic.play();
+    else void this.prePvpMusic.play();
   }
 
   exit() {
-    this.music.stop(400);
+    this.prePvpMusic.stop(400);
+    this.pvpMusic.stop(400);
     this.game.input.setTouchUi(false);
-    this.game.input.setTouchHandlers(null, []);
+    this.game.input.setTouchPads([]);
   }
 
-  /** Stops the pre-PvP theme once PvP unlocks (or when leaving the scene). */
-  private stopPrePvpMusic() {
-    if (this.musicStopped) return;
-    this.musicStopped = true;
-    this.music.stop();
+  /** Fade out the peaceful theme and start the PvP track. */
+  private startPvpMusic() {
+    if (this.pvpThemeStarted) return;
+    this.pvpThemeStarted = true;
+    this.prePvpMusic.stop();
+    void this.pvpMusic.play();
   }
 
   private syncCameras() {
@@ -215,44 +300,82 @@ export class PlayScene implements Scene {
     for (const a of this.agents) a.camera.resize(viewW, viewH);
   }
 
-  private needsConfirm() {
-    const a = this.primaryLocal();
-    return (a.building || a.recruiting || a.trading) && this.menuOwner === a;
-  }
-
   private syncTouchHandlers() {
-    if (!this.game.input.showTouchUi) return;
-    const layout = touchLayout(this.game.width, this.game.height, { confirm: this.needsConfirm() });
-    this.touchLayout = layout;
-    const stick = layout.stick;
-    this.game.input.setTouchHandlers(
-      {
-        contains: (x, y) => Math.hypot(x - stick.cx, y - stick.cy) <= stick.radius + 28,
-        setAxis: (p) => {
-          if (!p) {
-            this.game.input.setStickAxis(null);
-            return;
-          }
-          let dx = p.x - stick.cx;
-          let dy = p.y - stick.cy;
-          const len = Math.hypot(dx, dy) || 1;
-          const max = stick.radius;
-          if (len > max) {
-            dx = (dx / len) * max;
-            dy = (dy / len) * max;
-          }
-          this.game.input.setStickAxis({ x: dx / max, y: dy / max });
+    // Keep touch UI on for split-screen even if the device wasn't flagged as touch.
+    if (this.splitScreen) this.game.input.setTouchUi(true, { force: true });
+    if (!this.game.input.showTouchUi) {
+      this.touchLayouts = [];
+      this.game.input.setTouchPads([]);
+      return;
+    }
+    const w = this.game.width;
+    const h = this.game.height;
+    // Each split-screen half gets stick (left of half) + buttons (right of half).
+    const dual = this.splitScreen && this.agents.length >= 2;
+    const padCount = dual ? 2 : 1;
+    const layouts: TouchLayout[] = [];
+    const pads: TouchPadHandler[] = [];
+
+    for (let i = 0; i < padCount; i++) {
+      const slot = Math.min(i, 1) as PlayerSlot;
+      const originX = dual ? (i * w) / 2 : 0;
+      const viewW = dual ? w / 2 : w;
+      const agent = this.agents[i];
+      const confirm =
+        !!agent &&
+        this.menuOwner === agent &&
+        (agent.building || agent.recruiting || agent.trading);
+      const layout = touchLayout(viewW, h, {
+        originX,
+        slot,
+        confirm,
+        showPause: i === 0,
+      });
+      layouts.push(layout);
+      const stick = layout.stick;
+      pads.push({
+        slot,
+        stick: {
+          contains: (x, y) => pointInStickHit(stick, x, y),
+          setAxis: (p) => {
+            if (!p) {
+              this.stickOrigins[slot] = null;
+              this.game.input.setStickAxis(slot, null);
+              return;
+            }
+            if (!this.stickOrigins[slot]) {
+              const margin = stick.radius + 6;
+              this.stickOrigins[slot] = {
+                x: Math.max(stick.hitX + margin, Math.min(stick.hitX + stick.hitW - margin, p.x)),
+                y: Math.max(stick.hitY + margin, Math.min(h - margin, p.y)),
+              };
+            }
+            const o = this.stickOrigins[slot]!;
+            let dx = p.x - o.x;
+            let dy = p.y - o.y;
+            const len = Math.hypot(dx, dy) || 1;
+            const max = stick.radius;
+            if (len > max) {
+              dx = (dx / len) * max;
+              dy = (dy / len) * max;
+            }
+            this.game.input.setStickAxis(slot, { x: dx / max, y: dy / max });
+          },
         },
-      },
-      layout.buttons.map((b) => ({
-        action: b.id,
-        contains: (x, y) => Math.hypot(x - b.x, y - b.y) <= b.r + 8,
-      })),
-    );
+        buttons: layout.buttons.map((b) => ({
+          action: b.id,
+          contains: (x, y) => Math.hypot(x - b.x, y - b.y) <= b.r + 14,
+        })),
+      });
+    }
+
+    this.touchLayouts = layouts;
+    this.game.input.setTouchPads(pads);
   }
 
   private placeBuilding(agent: Agent) {
-    const def = BUILDINGS[agent.selectedBuilding];
+    const def = BUILD_MENU[agent.selectedBuilding];
+    if (!def) return;
     const spot = this.previewRect(agent, def);
     const px = agent.player.x + agent.player.w / 2;
     const py = agent.player.y;
@@ -275,12 +398,46 @@ export class PlayScene implements Scene {
       this.houses.push(new House(spot.x, spot.y, def, agent.id));
       this.popups.add(`Built ${def.name}!`, def.roof, spot.x + def.w / 2, spot.y);
       this.completeQuests(agent, agent.quests.report({ type: 'build', building: def.id }));
+      this.tryMergeMansion(agent.id, spot.x + def.w / 2, spot.y + def.h / 2);
     }
+  }
+
+  /** Four adjacent residential houses owned by the same player become a mansion. */
+  private tryMergeMansion(ownerId: number, nearX: number, nearY: number) {
+    const footprints = this.houses.map((h) => ({
+      x: h.x,
+      y: h.y,
+      w: h.w,
+      h: h.h,
+      building: h.def.id,
+      ownerId: h.ownerId,
+    }));
+    const indices = findMansionCluster(footprints, ownerId, { x: nearX, y: nearY });
+    if (!indices) return;
+
+    const cluster = indices.map((i) => footprints[i]);
+    const spot = mansionPlacement(cluster);
+    const mansion = BUILDING_BY_ID.mansion;
+    const remove = new Set(indices);
+    this.houses = this.houses.filter((_, i) => !remove.has(i));
+    this.houses.push(new House(spot.x, spot.y, mansion, ownerId));
+    this.banner = { text: 'Mansion formed — elite troops unlocked!', time: BANNER_TIME + 1 };
+    this.popups.add('Mansion!', mansion.roof, spot.x + mansion.w / 2, spot.y);
   }
 
   update(dt: number) {
     this.syncCameras();
     this.syncTouchHandlers();
+
+    if (this.tutorial) {
+      this.game.input.setTouchPads([]);
+      if (this.tutorial.update(this.game.input, this.game.width, this.game.height)) {
+        saveTutorialDone();
+        this.tutorial = null;
+      }
+      return;
+    }
+
     for (const agent of this.agents) {
       if (agent.picker) {
         const choice = agent.picker.update(this.game.input, this.game.width, this.game.height);
@@ -308,11 +465,11 @@ export class PlayScene implements Scene {
     if (this.paused) {
       const tap = this.game.input.consumeTap();
       if (this.game.input.wasPressed('KeyC') && !this.net) {
-        this.game.scenes.switch(new ModeSelectScene(this.game));
+        this.game.scenes.switch(new MainMenuScene(this.game));
       } else if (tap && !this.net) {
         const { width: w, height: h } = this.game;
         if (pointIn(tap, w / 2 - 120, h / 2 + 24, 240, 36)) {
-          this.game.scenes.switch(new ModeSelectScene(this.game));
+          this.game.scenes.switch(new MainMenuScene(this.game));
         }
       }
       return;
@@ -331,6 +488,7 @@ export class PlayScene implements Scene {
       if (agent.remote || agent.player.lives <= 0) continue;
       this.updateBuild(agent);
       this.updateInteract(agent);
+      this.tryEat(agent);
     }
 
     this.updateBuildings(dt);
@@ -343,7 +501,7 @@ export class PlayScene implements Scene {
         }
       }
       if (pvpUnlocked) {
-        this.stopPrePvpMusic();
+        this.startPvpMusic();
         if (this.canFight()) {
           this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
         }
@@ -351,10 +509,11 @@ export class PlayScene implements Scene {
     }
 
     if (this.dayNight.pvpActive) {
-      this.stopPrePvpMusic();
-    } else if (!this.musicStopped && !this.music.isPlaying) {
+      this.startPvpMusic();
+      if (!this.pvpMusic.isPlaying) void this.pvpMusic.play();
+    } else if (!this.prePvpMusic.isPlaying) {
       // Retry if the browser blocked autoplay until a gesture.
-      void this.music.play();
+      void this.prePvpMusic.play();
     }
 
 
@@ -367,18 +526,7 @@ export class PlayScene implements Scene {
       this.trackIsland(agent, dt);
     }
 
-    const barracks = this.findBuilding(this.agents[0], (h) => !!h.def.garrison, Infinity);
-    for (const t of this.troops) {
-      const owner = this.agents.find((a) => a.id === t.ownerId) ?? this.agents[0];
-      if (t.order === 'garrison' && barracks) t.garrisonAt(dt, barracks, blocked);
-      else if (this.dayNight.pvpActive && this.canFight()) {
-        const foe = this.nearestFoe(owner, Infinity);
-        if (foe && t.order === 'follow') t.follow(dt, foe.player, blocked);
-        else t.follow(dt, owner.player, blocked);
-      } else {
-        t.follow(dt, owner.player, blocked);
-      }
-    }
+    this.updateTroopOrders(dt, blocked);
 
     this.coins.forEach((c) => c.update(dt));
     this.resources.forEach((r) => r.update(dt));
@@ -434,8 +582,17 @@ export class PlayScene implements Scene {
 
     for (const agent of this.agents) {
       if (agent.remote || agent.player.lives <= 0) continue;
-      if (agent.building || agent.recruiting) continue;
-      if (agent.controls.interactPressed() && !this.nearestBuilding(agent) && !this.nearestVillage(agent)) this.tryAttack(agent);
+      if (agent.building || agent.recruiting || agent.trading) continue;
+      if (
+        agent.controls.interactPressed() &&
+        !this.nearestBuilding(agent) &&
+        !this.nearestVillage(agent) &&
+        !this.nearestChest(agent)
+      ) {
+        this.tryAttack(agent);
+      }
+      this.tickFireball(agent);
+      this.tickShieldBash(agent);
     }
 
     this.updateBolts();
@@ -449,35 +606,89 @@ export class PlayScene implements Scene {
 
   private tryAttack(agent: Agent) {
     const p = agent.player;
-    const c = p.character.combat;
+    const c = p.combat;
     if (p.attackCd > 0 || p.stun > 0) return;
     p.attackCd = c.cooldown;
-    p.swingT = 0.16;
+    p.swingT = ATTACK_POSE;
     if (c.lunge) p.lunge(c.lunge);
 
     const px = p.x + p.w / 2;
     const py = p.y + p.h / 2;
     const angle = Math.atan2(p.facing.y, p.facing.x);
+    const isBolt = c.style === 'bolt';
     this.swings.push({
       x: px,
       y: py,
       angle,
-      range: c.style === 'bolt' ? 36 : c.range,
-      cone: c.style === 'bolt' ? 0.35 : c.cone,
+      range: isBolt ? 42 : c.range,
+      cone: isBolt ? 0.4 : c.cone,
       color: p.character.accent,
       age: 0,
-      life: 0.16,
+      life: ATTACK_POSE,
+      kind: isBolt ? 'cast' : 'slash',
     });
 
-    if (c.style === 'bolt') {
-      const len = Math.hypot(p.facing.x, p.facing.y) || 1;
-      this.bolts.push(
-        new Bolt(px, py, (p.facing.x / len) * BOLT_SPEED, (p.facing.y / len) * BOLT_SPEED, agent.id, p.character.accent),
-      );
+    if (isBolt) {
+      this.spawnBolts(agent, angle);
       return;
     }
 
     this.slashHit(agent, px, py, c.range, c.cone, c.knockback, c.stun);
+  }
+
+  private tickFireball(agent: Agent) {
+    const p = agent.player;
+    if (p.fireballEvery <= 0 || p.lives <= 0) return;
+    p.fireballTimer += CONFIG.fixedStep;
+    if (p.fireballTimer < p.fireballEvery) return;
+    const foe = this.nearestFoe(agent, p.combat.range + 40);
+    if (!foe) return;
+    p.fireballTimer = 0;
+    const px = p.x + p.w / 2;
+    const py = p.y + p.h / 2;
+    const angle = Math.atan2(
+      foe.player.y + foe.player.h / 2 - py,
+      foe.player.x + foe.player.w / 2 - px,
+    );
+    this.spawnBolts(agent, angle);
+    this.swings.push({
+      x: px,
+      y: py,
+      angle,
+      range: 44,
+      cone: 0.4,
+      color: p.character.accent,
+      age: 0,
+      life: ATTACK_POSE * 0.85,
+      kind: 'cast',
+    });
+  }
+
+  private tickShieldBash(agent: Agent) {
+    const p = agent.player;
+    if (!p.shieldBash || !p.isInvulnerable || p.lives <= 0) return;
+    for (const foe of this.agents) {
+      if (foe === agent || foe.player.lives <= 0) continue;
+      if (!overlaps(p, foe.player)) continue;
+      this.dealHit(agent, foe, {
+        knockback: p.combat.knockback + 22,
+        stun: p.combat.stun + 0.12,
+        label: 'Bash!',
+      });
+    }
+  }
+
+  private spawnBolts(agent: Agent, angle: number) {
+    const p = agent.player;
+    const n = 1 + p.boltExtra;
+    const spread = n > 1 ? 0.22 : 0;
+    const life = Math.max(0.45, p.combat.range / BOLT_SPEED);
+    const px = p.x + p.w / 2;
+    const py = p.y + p.h / 2;
+    for (let i = 0; i < n; i++) {
+      const a = angle + (i - (n - 1) / 2) * spread;
+      this.bolts.push(new Bolt(px, py, Math.cos(a) * BOLT_SPEED, Math.sin(a) * BOLT_SPEED, agent.id, p.character.accent, life));
+    }
   }
 
   private slashHit(
@@ -515,7 +726,20 @@ export class PlayScene implements Scene {
     const by = b.player.y + b.player.h / 2;
     a.player.knockback(bx, by, 36);
     b.player.knockback(ax, ay, 36);
-    this.popups.add('Clash!', '#ffd54f', (ax + bx) / 2, (ay + by) / 2);
+    const mx = (ax + bx) / 2;
+    const my = (ay + by) / 2;
+    this.popups.add('Clash!', '#ffd54f', mx, my);
+    this.swings.push({
+      x: mx,
+      y: my,
+      angle: Math.atan2(by - ay, bx - ax),
+      range: 28,
+      cone: Math.PI,
+      color: '#ffd54f',
+      age: 0,
+      life: 0.2,
+      kind: 'clash',
+    });
   }
 
   private updateBolts() {
@@ -529,7 +753,7 @@ export class PlayScene implements Scene {
       for (const foe of this.agents) {
         if (foe === owner || foe.player.lives <= 0) continue;
         if (!overlaps(bolt, foe.player)) continue;
-        const c = owner.player.character.combat;
+        const c = owner.player.combat;
         this.dealHit(owner, foe, { knockback: c.knockback, stun: c.stun, label: 'Bolt!' });
         bolt.alive = false;
         break;
@@ -538,16 +762,77 @@ export class PlayScene implements Scene {
     this.bolts = this.bolts.filter((b) => b.alive);
   }
 
+  /** Followers stay with you; garrisoned troops hold a battle line at the Barracks. */
+  private updateTroopOrders(dt: number, blocked: (r: Rect) => boolean) {
+    for (const owner of this.agents) {
+      const mine = this.troops.filter((t) => t.ownerId === owner.id);
+      const followers = mine.filter((t) => t.order === 'follow');
+      const garrisoned = mine.filter((t) => t.order === 'garrison');
+
+      for (const t of followers) t.follow(dt, owner.player, blocked);
+
+      if (garrisoned.length === 0) continue;
+      const barracks = this.findBuilding(owner, (h) => !!h.def.garrison, Infinity);
+      if (!barracks) {
+        for (const t of garrisoned) t.follow(dt, owner.player, blocked);
+        continue;
+      }
+
+      const foe = this.dayNight.pvpActive && this.canFight() ? this.nearestFoe(owner, Infinity) : null;
+      const bx = barracks.x + barracks.w / 2;
+      const by = barracks.y + barracks.h / 2;
+      let facing = Math.PI / 2;
+      if (foe) {
+        facing = Math.atan2(
+          foe.player.y + foe.player.h / 2 - by,
+          foe.player.x + foe.player.w / 2 - bx,
+        );
+      }
+      const px = Math.cos(facing + Math.PI / 2);
+      const py = Math.sin(facing + Math.PI / 2);
+      const fx = Math.cos(facing);
+      const fy = Math.sin(facing);
+      const n = garrisoned.length;
+      garrisoned.forEach((t, i) => {
+        const slot = i - (n - 1) / 2;
+        const tx = bx + fx * FORM_FORWARD + px * slot * FORM_SPACING;
+        const ty = by + fy * FORM_FORWARD + py * slot * FORM_SPACING;
+        t.formAt(dt, tx, ty, blocked);
+        if (foe) t.lookAt(foe.player.x + foe.player.w / 2, foe.player.y + foe.player.h / 2);
+        else t.lookAt(t.x + t.w / 2 + fx, t.y + t.h / 2 + fy);
+      });
+    }
+  }
+
   private updateTroopAttacks() {
+    if (!this.dayNight.pvpActive || !this.canFight()) return;
+
     for (const t of this.troops) {
       const owner = this.agents.find((a) => a.id === t.ownerId);
       if (!owner || owner.player.lives <= 0 || t.attackCd > 0) continue;
-      const foe = this.nearestFoe(owner, t.def.attackRange + 8);
+
+      // Barracks troops always fight from the line; followers only when foes press you.
+      let foe: Agent | null = null;
+      if (t.order === 'garrison') {
+        foe = this.nearestFoe(owner, t.def.attackRange + 12);
+      } else if (t.order === 'follow') {
+        const threat = this.nearestFoe(owner, TROOP_PROTECT_RANGE);
+        if (!threat) continue;
+        const dx = threat.player.x + threat.player.w / 2 - (t.x + t.w / 2);
+        const dy = threat.player.y + threat.player.h / 2 - (t.y + t.h / 2);
+        if (Math.hypot(dx, dy) > t.def.attackRange + 8) continue;
+        foe = threat;
+      } else {
+        continue;
+      }
+
       if (!foe) continue;
       const dx = foe.player.x + foe.player.w / 2 - (t.x + t.w / 2);
       const dy = foe.player.y + foe.player.h / 2 - (t.y + t.h / 2);
       if (Math.hypot(dx, dy) > t.def.attackRange) continue;
-      t.attackCd = t.def.attackEvery;
+
+      t.lookAt(foe.player.x + foe.player.w / 2, foe.player.y + foe.player.h / 2);
+      t.attackCd = t.def.attackEvery * owner.player.troopAtkMul;
       this.swings.push({
         x: t.x + t.w / 2,
         y: t.y + t.h / 2,
@@ -556,7 +841,8 @@ export class PlayScene implements Scene {
         cone: 0.8,
         color: t.def.accent,
         age: 0,
-        life: 0.12,
+        life: 0.18,
+        kind: 'slash',
       });
       this.dealHit(owner, foe, {
         knockback: t.def.knockback,
@@ -660,7 +946,7 @@ export class PlayScene implements Scene {
     const wasPvp = this.dayNight.pvpActive;
     this.dayNight.setElapsed(state.dayElapsed);
     if (!wasPvp && this.dayNight.pvpActive) {
-      this.stopPrePvpMusic();
+      this.startPvpMusic();
       if (this.canFight()) {
         this.banner = { text: 'PvP unlocked — fight!', time: BANNER_TIME + 1 };
       }
@@ -804,7 +1090,8 @@ export class PlayScene implements Scene {
     if (!agent.building || this.menuOwner !== agent) return;
 
     const input = this.game.input;
-    const n = BUILDINGS.length;
+    const n = BUILD_MENU.length;
+    if (agent.selectedBuilding >= n) agent.selectedBuilding = 0;
     const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
     const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
     const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
@@ -832,10 +1119,11 @@ export class PlayScene implements Scene {
     for (const h of this.houses) {
       const produced = h.update(dt);
       if (!produced) continue;
+      const amount = h.def.produces?.amount ?? 1;
       const owner = this.agents.find((a) => a.id === h.ownerId) ?? this.agents[0];
-      owner.inventory[produced]++;
+      owner.inventory[produced] += amount;
       const def = RESOURCE_BY_ID[produced];
-      this.popups.add(`+1 ${def.name}`, def.color, h.x + h.w / 2, h.y - 4);
+      this.popups.add(`+${amount} ${def.name}`, def.color, h.x + h.w / 2, h.y - 4);
     }
     this.pullToBuildings(dt);
   }
@@ -897,6 +1185,83 @@ export class PlayScene implements Scene {
 
   private nearestBuilding(agent: Agent) {
     return this.findBuilding(agent, () => true, INTERACT_RANGE);
+  }
+
+  private nearestChest(agent: Agent) {
+    const px = agent.player.x + agent.player.w / 2;
+    const py = agent.player.y + agent.player.h / 2;
+    let best: Chest | null = null;
+    let bestDist = INTERACT_RANGE;
+    for (const c of this.chests) {
+      if (c.opened) continue;
+      const d = Math.hypot(px - (c.x + c.w / 2), py - (c.y + c.h / 2));
+      if (d < bestDist) {
+        best = c;
+        bestDist = d;
+      }
+    }
+    return best;
+  }
+
+  /** Three treasure chests on the farthest islands from spawn. */
+  private spawnChests() {
+    const size = CHEST_SIZE;
+    const home = this.map.islands[0];
+    const farIslands = this.map.islands
+      .map((isle, i) => ({ i, dist: Math.hypot(isle.x - home.x, isle.y - home.y) }))
+      .filter((e) => e.i !== 0)
+      .sort((a, b) => b.dist - a.dist);
+
+    const placed: { x: number; y: number }[] = [];
+    for (const { i: island } of farIslands) {
+      if (placed.length >= CHEST_COUNT) break;
+      const found = this.map.randomWalkablePoint(size, (x, y) => {
+        if (this.map.islandAt(x + size / 2, y + size / 2) !== island) return false;
+        if (!this.isFree(x, y, size)) return false;
+        for (const p of placed) {
+          if (Math.hypot(x - p.x, y - p.y) < CHEST_MIN_SPREAD) return false;
+        }
+        return true;
+      });
+      if (!found) continue;
+      placed.push(found);
+      this.chests.push(new Chest(found.x, found.y));
+    }
+  }
+
+  private openChest(chest: Chest) {
+    if (chest.opened) return;
+    chest.opened = true;
+    const cx = chest.x + chest.w / 2;
+    const cy = chest.y + chest.h / 2;
+    const resSize = CONFIG.resource.size;
+    const coinSize = CONFIG.coin.size;
+
+    CHEST_LOOT.forEach((type, i) => {
+      const ang = (i / CHEST_LOOT.length) * Math.PI * 2 + 0.4;
+      const dist = 34 + (i % 4) * 12;
+      let x = cx + Math.cos(ang) * dist - resSize / 2;
+      let y = cy + Math.sin(ang) * dist - resSize / 2;
+      if (!this.map.isAreaWalkable({ x, y, w: resSize, h: resSize })) {
+        x = cx - resSize / 2;
+        y = cy - resSize / 2;
+      }
+      this.resources.push(new Resource(x, y, type));
+    });
+
+    for (let i = 0; i < CHEST_COINS; i++) {
+      const ang = (i / CHEST_COINS) * Math.PI * 2;
+      const dist = 22 + (i % 3) * 10;
+      let x = cx + Math.cos(ang) * dist - coinSize / 2;
+      let y = cy + Math.sin(ang) * dist - coinSize / 2;
+      if (!this.map.isAreaWalkable({ x, y, w: coinSize, h: coinSize })) {
+        x = cx - coinSize / 2;
+        y = cy - coinSize / 2;
+      }
+      this.coins.push(new Coin(x, y));
+    }
+
+    this.popups.add('Treasure!', '#e8c36a', cx, cy - 8);
   }
 
   private obstructs(r: Rect) {
@@ -992,10 +1357,39 @@ export class PlayScene implements Scene {
     return agent.id === 0 || this.net ? 'B' : 'K';
   }
 
+  private eatKeyLabel(agent: Agent) {
+    return agent.id === 0 || this.net ? 'R' : 'N';
+  }
+
+  private tryEat(agent: Agent) {
+    if (!agent.controls.eatPressed()) return;
+    const px = agent.player.x + agent.player.w / 2;
+    const py = agent.player.y;
+    if (agent.player.hunger >= 0.995) {
+      this.popups.add('Not hungry', '#81c784', px, py);
+      return;
+    }
+    const food = takeFood(agent.inventory);
+    if (!food) {
+      this.popups.add('No food — pick berries or trade for bread', '#ef5350', px, py);
+      return;
+    }
+    agent.player.feed(food.restore);
+    const def = RESOURCE_BY_ID[food.id];
+    this.popups.add(`Ate ${def.name}`, def.color, px, py);
+    if (this.net) this.net.send({ type: 'action', action: { kind: 'eat', id: food.id } });
+  }
+
   private interactHint(agent: Agent, house: House) {
     const key = this.interactKeyLabel(agent);
     const { def } = house;
-    if (def.recruits) return agent.recruiting ? `${key} — Close shop` : `${key} — Recruit troops`;
+    if (def.recruits?.length) {
+      if (agent.recruiting) return `${key} — Close shop`;
+      if (def.id === 'mansion') return `${key} — Hire elite troops`;
+      return def.recruits.includes('archer') && def.recruits.length === 1
+        ? `${key} — Hire archers`
+        : `${key} — Recruit troops`;
+    }
     if (def.garrison) {
       const mine = this.troops.filter((t) => t.ownerId === agent.id);
       const stationed = mine.some((t) => t.order === 'garrison');
@@ -1011,7 +1405,7 @@ export class PlayScene implements Scene {
     const px = agent.player.x + agent.player.w / 2;
     const py = agent.player.y;
 
-    if (def.recruits) {
+    if (def.recruits?.length) {
       if (this.menuOwner && this.menuOwner !== agent) {
         this.menuOwner.building = false;
         this.menuOwner.recruiting = false;
@@ -1019,6 +1413,7 @@ export class PlayScene implements Scene {
       agent.recruiting = true;
       agent.building = false;
       agent.trading = false;
+      agent.selectedTroop = Math.min(agent.selectedTroop, def.recruits.length - 1);
       this.menuOwner = agent;
       return;
     }
@@ -1046,8 +1441,9 @@ export class PlayScene implements Scene {
     if (def.produces) {
       const res = RESOURCE_BY_ID[def.produces.resource];
       const left = Math.ceil(house.produceCooldownLeft);
+      const amount = def.produces.amount ?? 1;
       this.popups.add(
-        `${def.name}: +1 ${res.name} · ${left}s left`,
+        `${def.name}: +${amount} ${res.name} · ${left}s left`,
         res.color,
         house.x + house.w / 2,
         house.y,
@@ -1066,7 +1462,32 @@ export class PlayScene implements Scene {
     this.popups.add(def.name, def.trim, house.x + house.w / 2, house.y);
   }
 
+  private chestHintRect(vw: number, vh: number) {
+    const lift = inventoryHeight(this.splitScreen ? 0.85 : 1, vw) + 28;
+    return { x: vw / 2 - 70, y: vh - lift - 16, w: 140, h: 28 };
+  }
+
   private updateInteract(agent: Agent) {
+    // Tap the on-screen F / Open chest button
+    if (!agent.building && !agent.recruiting && !agent.trading) {
+      const nearChest = this.nearestChest(agent);
+      if (nearChest) {
+        const tap = this.game.input.peekTap();
+        if (tap) {
+          const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
+          const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
+          const hudH = this.game.height - pad;
+          const originX = this.splitScreen && agent.id === 1 ? viewW : 0;
+          const r = this.chestHintRect(viewW, hudH);
+          if (pointIn(tap, originX + r.x, r.y, r.w, r.h)) {
+            this.game.input.consumeTap();
+            this.openChest(nearChest);
+            return;
+          }
+        }
+      }
+    }
+
     if (!agent.controls.interactPressed()) {
       // still allow menu nav if recruiting
     } else if (!agent.building) {
@@ -1076,21 +1497,31 @@ export class PlayScene implements Scene {
       } else if (agent.trading) {
         agent.trading = false;
         if (this.menuOwner === agent) this.menuOwner = null;
-      } else if (this.dayNight.pvpActive && this.canFight() && !this.nearestBuilding(agent) && !this.nearestVillage(agent)) {
-        // Combat uses F / interact; buildings still win if you're standing on one.
+      } else if (
+        this.dayNight.pvpActive &&
+        this.canFight() &&
+        !this.nearestBuilding(agent) &&
+        !this.nearestVillage(agent) &&
+        !this.nearestChest(agent)
+      ) {
+        // Combat uses F / interact; buildings / chests still win if you're standing on one.
       } else {
-        const nearby = this.nearestBuilding(agent);
-        if (nearby) this.interactWith(agent, nearby);
+        const chest = this.nearestChest(agent);
+        if (chest) this.openChest(chest);
         else {
-          const village = this.nearestVillage(agent);
-          if (village) this.openTrade(agent, village);
+          const nearby = this.nearestBuilding(agent);
+          if (nearby) this.interactWith(agent, nearby);
+          else {
+            const village = this.nearestVillage(agent);
+            if (village) this.openTrade(agent, village);
+          }
         }
       }
     }
 
     const recruitHut =
       agent.recruiting && this.menuOwner === agent
-        ? this.findBuilding(agent, (h) => !!h.def.recruits, INTERACT_RANGE)
+        ? this.findBuilding(agent, (h) => !!h.def.recruits?.length, INTERACT_RANGE)
         : null;
     if (agent.recruiting && !recruitHut) {
       agent.recruiting = false;
@@ -1100,10 +1531,14 @@ export class PlayScene implements Scene {
 
     if (!agent.recruiting || !recruitHut || this.menuOwner !== agent) return;
 
+    const pool = troopsFor(recruitHut.def.recruits ?? []);
+    if (pool.length === 0) return;
+    if (agent.selectedTroop >= pool.length) agent.selectedTroop = 0;
+
     const input = this.game.input;
-    const n = TROOPS.length;
+    const n = pool.length;
     const hire = () => {
-      const def = TROOPS[agent.selectedTroop];
+      const def = pool[agent.selectedTroop];
       if (!canAffordTroop(agent.inventory, def)) return;
       spendTroop(agent.inventory, def);
       const angle = Math.random() * Math.PI * 2;
@@ -1121,7 +1556,7 @@ export class PlayScene implements Scene {
     const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
     const tap = input.peekTap();
     if (tap) {
-      const cards = troopMenuCards(menuLayout);
+      const cards = troopMenuCards(pool, menuLayout);
       const hit = cards.find((c) => pointIn(tap, c.x, c.y, c.w, c.h));
       if (hit) {
         input.consumeTap();
@@ -1212,8 +1647,9 @@ export class PlayScene implements Scene {
 
   private collectCoins(agent: Agent, coinBonus: number) {
     let scored = false;
+    const grab = agent.player.collectRect();
     for (const coin of this.coins) {
-      if (!overlaps(agent.player, coin)) continue;
+      if (!overlaps(grab, coin)) continue;
       coin.alive = false;
       const netId = (coin as Coin & { netId?: number }).netId;
       if (this.net && netId != null) {
@@ -1252,17 +1688,20 @@ export class PlayScene implements Scene {
   }
 
   private collectResources(agent: Agent) {
+    const grab = agent.player.collectRect();
     for (const r of this.resources) {
-      if (!overlaps(agent.player, r)) continue;
+      if (!overlaps(grab, r)) continue;
       r.alive = false;
       const netId = (r as Resource & { netId?: number }).netId;
       if (this.net && netId != null) {
         this.net.send({ type: 'action', action: { kind: 'collectResource', id: netId } });
       } else {
-        agent.inventory[r.type]++;
+        let n = 1;
+        if (Math.random() < agent.player.resourceLuck) n++;
+        agent.inventory[r.type] += n;
         const def = RESOURCE_BY_ID[r.type];
-        this.popups.add(`+1 ${def.name}`, def.color, r.x + r.w / 2, r.y - 4);
-        this.completeQuests(agent, agent.quests.report({ type: 'collect', resource: r.type }));
+        this.popups.add(`+${n} ${def.name}`, def.color, r.x + r.w / 2, r.y - 4);
+        this.completeQuests(agent, agent.quests.report({ type: 'collect', resource: r.type, amount: n }));
       }
     }
     this.resources = this.resources.filter((r) => r.alive);
@@ -1347,6 +1786,11 @@ export class PlayScene implements Scene {
       }
     }
 
+    if (this.tutorial) {
+      this.tutorial.render(ctx, w, h);
+      return;
+    }
+
     if (this.paused) {
       const touch = this.game.input.touchPreferred;
       drawText(ctx, 'PAUSED', w / 2, h / 2, 48, 'center');
@@ -1358,8 +1802,8 @@ export class PlayScene implements Scene {
             ? 'Tap Ⅱ to resume'
             : 'Esc to resume'
           : touch
-            ? 'Tap here for modes'
-            : 'C for modes',
+            ? 'Tap here for main menu'
+            : 'C for main menu',
         w / 2,
         h / 2 + 40,
         16,
@@ -1368,10 +1812,20 @@ export class PlayScene implements Scene {
       ctx.globalAlpha = 1;
     }
 
-    if (this.game.input.showTouchUi && !this.paused) {
-      const axis = this.game.input.getStickAxis();
-      const stickActive = axis.x !== 0 || axis.y !== 0;
-      drawTouchControls(ctx, this.touchLayout, stickActive ? axis : null);
+    // Draw each player's pad on top of their screen (after viewports).
+    if (this.game.input.showTouchUi && !this.paused && !this.tutorial) {
+      for (const layout of this.touchLayouts) {
+        const slot = layout.slot;
+        const axis = this.game.input.getStickAxis(slot);
+        const origin = this.stickOrigins[slot];
+        const stickActive = origin != null || axis.x !== 0 || axis.y !== 0;
+        ctx.save();
+        ctx.beginPath();
+        ctx.rect(layout.originX, 0, layout.viewW, h);
+        ctx.clip();
+        drawTouchControls(ctx, layout, stickActive ? axis : null, origin);
+        ctx.restore();
+      }
     }
 
     if (this.netStatus) drawText(ctx, this.netStatus, w / 2, 20, 14, 'center');
@@ -1401,9 +1855,13 @@ export class PlayScene implements Scene {
     this.resources.forEach((r) => r.render(ctx));
     this.coins.forEach((c) => c.render(ctx));
     const depth = (s: { y: number; h: number }) => (s instanceof Village ? s.stallY + 16 : s.y + s.h);
-    const sprites = [...this.houses, ...this.villages, ...this.troops, ...this.agents.map((a) => a.player)].sort(
-      (a, b) => depth(a) - depth(b),
-    );
+    const sprites = [
+      ...this.chests,
+      ...this.houses,
+      ...this.villages,
+      ...this.troops,
+      ...this.agents.map((a) => a.player),
+    ].sort((a, b) => depth(a) - depth(b));
     sprites.forEach((s) => s.render(ctx));
     this.bolts.forEach((b) => b.render(ctx));
     this.renderSwings(ctx);
@@ -1423,6 +1881,7 @@ export class PlayScene implements Scene {
       width: Math.min(CONFIG.minimap.width, vw - 24),
       players,
       villages: this.villages,
+      chests: this.chests.filter((c) => !c.opened),
     });
 
     this.renderHud(ctx, agent, vw);
@@ -1439,9 +1898,14 @@ export class PlayScene implements Scene {
         : `${this.interactKeyLabel(agent)} to close`,
     };
     if (agent.building && this.menuOwner === agent) {
-      drawBuildMenu(ctx, agent.inventory, BUILDINGS[agent.selectedBuilding], menuLayout);
+      drawBuildMenu(ctx, agent.inventory, BUILD_MENU[agent.selectedBuilding], menuLayout);
     } else if (agent.recruiting && this.menuOwner === agent) {
-      drawTroopMenu(ctx, agent.inventory, TROOPS[agent.selectedTroop], menuLayout);
+      const shop = this.findBuilding(agent, (h) => !!h.def.recruits?.length, INTERACT_RANGE);
+      const pool = troopsFor(shop?.def.recruits ?? []);
+      if (pool.length) {
+        const sel = pool[Math.min(agent.selectedTroop, pool.length - 1)];
+        drawTroopMenu(ctx, agent.inventory, pool, sel, menuLayout);
+      }
     } else if (agent.trading && this.menuOwner === agent) {
       const village = this.nearestVillage(agent);
       if (village) {
@@ -1470,22 +1934,11 @@ export class PlayScene implements Scene {
   }
 
   private renderSwings(ctx: CanvasRenderingContext2D) {
-    for (const s of this.swings) {
-      const k = 1 - s.age / s.life;
-      ctx.save();
-      ctx.strokeStyle = s.color;
-      ctx.globalAlpha = 0.35 + 0.55 * k;
-      ctx.lineWidth = 3 + 3 * k;
-      ctx.lineCap = 'round';
-      ctx.beginPath();
-      ctx.arc(s.x, s.y, s.range * (0.55 + 0.45 * k), s.angle - s.cone, s.angle + s.cone);
-      ctx.stroke();
-      ctx.restore();
-    }
+    for (const s of this.swings) drawSwingFx(ctx, s);
   }
 
   private renderPreview(ctx: CanvasRenderingContext2D, agent: Agent) {
-    const def = BUILDINGS[agent.selectedBuilding];
+    const def = BUILD_MENU[agent.selectedBuilding];
     const spot = this.previewRect(agent, def);
     const ok = this.canPlace(agent, def, spot);
     ctx.globalAlpha = 0.55;
@@ -1511,7 +1964,20 @@ export class PlayScene implements Scene {
   }
 
   private renderInteractHint(ctx: CanvasRenderingContext2D, agent: Agent, vw: number, vh: number) {
-    const lift = inventoryHeight(this.splitScreen ? 0.85 : 1) + 28;
+    const lift = inventoryHeight(this.splitScreen ? 0.85 : 1, vw) + 28;
+    const chest = this.nearestChest(agent);
+    if (chest) {
+      const r = this.chestHintRect(vw, vh);
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.beginPath();
+      ctx.roundRect(r.x, r.y, r.w, r.h, 8);
+      ctx.fill();
+      ctx.strokeStyle = '#ffd54f';
+      ctx.lineWidth = 2;
+      ctx.stroke();
+      drawText(ctx, 'F — Open chest', vw / 2, vh - lift, 13, 'center');
+      return;
+    }
     const nearby = this.nearestBuilding(agent);
     if (nearby) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
@@ -1525,9 +1991,16 @@ export class PlayScene implements Scene {
     if (village) {
       ctx.fillStyle = 'rgba(0, 0, 0, 0.5)';
       ctx.beginPath();
-      ctx.roundRect(vw / 2 - 130, vh - lift - 16, 260, 28, 8);
+      ctx.roundRect(vw / 2 - 150, vh - lift - 16, 300, 28, 8);
       ctx.fill();
-      drawText(ctx, `${this.interactKeyLabel(agent)} — Trade at ${village.name}`, vw / 2, vh - lift, 13, 'center');
+      drawText(
+        ctx,
+        `${this.interactKeyLabel(agent)} — Trade at ${village.name}  ·  bread`,
+        vw / 2,
+        vh - lift,
+        13,
+        'center',
+      );
       return;
     }
     const aura = this.activeAura(agent);
@@ -1555,7 +2028,7 @@ export class PlayScene implements Scene {
     const troopLabel = stationed > 0 ? `T:${mine.length}(${stationed})` : `T:${mine.length}`;
     drawText(
       ctx,
-      `H:${this.houses.length} ${troopLabel} · ${this.buildKeyLabel(agent)}/${this.interactKeyLabel(agent)}`,
+      `H:${this.houses.length} ${troopLabel} · ${this.buildKeyLabel(agent)}/${this.interactKeyLabel(agent)} · ${this.eatKeyLabel(agent)} eat`,
       12,
       54,
       12,
@@ -1585,6 +2058,12 @@ export class PlayScene implements Scene {
     ctx.fillStyle = CONFIG.colors.coin;
     ctx.fillRect(12, 68, barW * Math.min(1, Math.max(0, progress)), 7);
 
+    const hunger = agent.player.hunger;
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.45)';
+    ctx.fillRect(12, 78, barW, 7);
+    ctx.fillStyle = hungerColor(hunger);
+    ctx.fillRect(12, 78, barW * hunger, 7);
+
     agent.upgradesTaken.forEach((u, i) => {
       ctx.fillStyle = u.color;
       ctx.font = '14px system-ui, sans-serif';
@@ -1598,7 +2077,7 @@ export class PlayScene implements Scene {
     }
 
     if (this.dayNight.pvpActive && this.canFight() && agent.player.lives > 0) {
-      const c = agent.player.character.combat;
+      const c = agent.player.combat;
       const ready = agent.player.attackCd <= 0;
       const verb = c.style === 'bolt' ? 'Bolt' : 'Strike';
       drawText(

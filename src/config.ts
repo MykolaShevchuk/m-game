@@ -13,9 +13,11 @@ export const CONFIG = {
   },
   coin: { size: 12, count: 60 },
   resource: { size: 18, count: 40, /** Seconds between each respawn when below the count. */ respawnEvery: 5 },
-  upgradeEvery: 30,
+  upgradeEvery: 20,
+  /** Hunger drains from full to empty over `duration` seconds. */
+  hunger: { duration: 120, minSpeed: 0.42, berry: 0.34, cactus: 0.34, bread: 0.58 },
   /** Seconds for each day or night phase. */
-  dayNightPhase: 6 * 60,
+  dayNightPhase: 3 * 60,
   /** Full day+night cycles before players can fight each other. */
   pvpAfterFullDays: 2,
   minimap: { width: 280, margin: 12 },

@@ -1,4 +1,14 @@
-export type ResourceId = 'wood' | 'stone' | 'berries' | 'cactusFruit' | 'shell' | 'crystal' | 'obsidian';
+import { CONFIG } from '@/config';
+
+export type ResourceId =
+  | 'wood'
+  | 'stone'
+  | 'berries'
+  | 'cactusFruit'
+  | 'shell'
+  | 'crystal'
+  | 'obsidian'
+  | 'bread';
 
 export interface ResourceDef {
   id: ResourceId;
@@ -15,6 +25,13 @@ export const RESOURCES: ResourceDef[] = [
   { id: 'shell', name: 'Shell', color: '#d8b49a' },
   { id: 'crystal', name: 'Crystal', color: '#6a9eb0' },
   { id: 'obsidian', name: 'Obsidian', color: '#6a5880' },
+  { id: 'bread', name: 'Bread', color: '#c4a06a' },
+];
+
+export const FOODS: { id: ResourceId; restore: number }[] = [
+  { id: 'berries', restore: CONFIG.hunger.berry },
+  { id: 'cactusFruit', restore: CONFIG.hunger.cactus },
+  { id: 'bread', restore: CONFIG.hunger.bread },
 ];
 
 export const RESOURCE_BY_ID = Object.fromEntries(RESOURCES.map((r) => [r.id, r])) as Record<ResourceId, ResourceDef>;
@@ -50,3 +67,14 @@ export function rollResource(themeName: string): ResourceId {
 export type Inventory = Record<ResourceId, number>;
 
 export const emptyInventory = () => Object.fromEntries(RESOURCES.map((r) => [r.id, 0])) as Inventory;
+
+/** Eat berries first, then cactus fruit, then bread. Mutates inventory. */
+export function takeFood(inventory: Inventory): { id: ResourceId; restore: number } | null {
+  for (const food of FOODS) {
+    if (inventory[food.id] > 0) {
+      inventory[food.id]--;
+      return food;
+    }
+  }
+  return null;
+}

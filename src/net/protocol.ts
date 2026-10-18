@@ -4,10 +4,10 @@ import type { Inventory, ResourceId } from '@/resources';
 export type { Inventory };
 import type { TroopId } from '@/troops';
 
-/** WebSocket URL for the multiplayer server (same host as the page, port 3001). */
-export function defaultWsUrl(port = 3001): string {
-  if (typeof window === 'undefined') return `ws://localhost:${port}`;
-  const proto = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+/** HTTP endpoint for the Colyseus multiplayer server (same host as the page, port 3001). */
+export function defaultServerUrl(port = 3001): string {
+  if (typeof window === 'undefined') return `http://localhost:${port}`;
+  const proto = window.location.protocol === 'https:' ? 'https:' : 'http:';
   const host = window.location.hostname || 'localhost';
   return `${proto}//${host}:${port}`;
 }
@@ -69,9 +69,8 @@ export interface GameStateSnap {
   troops: TroopSnap[];
 }
 
+/** In-room messages (create/join go through the Colyseus SDK). */
 export type ClientMsg =
-  | { type: 'create'; name: string; character: number }
-  | { type: 'join'; code: string; name: string; character: number }
   | { type: 'start' }
   | { type: 'input'; ax: number; ay: number; interact: boolean; build: boolean; blink: boolean }
   | { type: 'pose'; x: number; y: number; facingX: number; facingY: number }
@@ -85,12 +84,11 @@ export type ClientAction =
   | { kind: 'garrison'; station: boolean }
   | { kind: 'menuNav'; menu: 'build' | 'recruit' | 'none' }
   | { kind: 'hit'; targetId: string }
-  | { kind: 'trade'; give: Partial<Inventory>; get: Partial<Inventory> };
+  | { kind: 'trade'; give: Partial<Inventory>; get: Partial<Inventory> }
+  | { kind: 'eat'; id: ResourceId };
 
 export type ServerMsg =
   | { type: 'error'; message: string }
-  | { type: 'created'; code: string; playerId: string }
-  | { type: 'joined'; code: string; playerId: string; hostId: string }
   | { type: 'lobby'; code: string; hostId: string; players: { id: string; name: string; character: number }[]; started: boolean }
   | { type: 'hello'; code: string; playerId: string; seed: number; hostId: string }
   | { type: 'state'; state: GameStateSnap };

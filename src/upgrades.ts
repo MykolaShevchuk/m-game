@@ -27,6 +27,7 @@ const speed = (name: string, icon: string, color: string): Upgrade => ({
   description: '+12% move speed',
   icon,
   color,
+  available: ({ player }) => player.speed < player.character.speed * 1.55,
   apply: ({ player }) => (player.speed *= 1.12),
 });
 
@@ -46,7 +47,7 @@ const life = (name: string, icon: string, color: string, max: number): Upgrade =
 const magnet = (name: string, icon: string, color: string): Upgrade => ({
   id: 'magnet',
   name,
-  description: '+70 coin pull radius',
+  description: '+70 loot pull radius',
   icon,
   color,
   available: ({ player }) => player.magnet < 450,
@@ -63,14 +64,34 @@ const coinValue = (name: string, icon: string, color: string): Upgrade => ({
   apply: ({ mods }) => mods.coinValue++,
 });
 
-const slow = (name: string, icon: string, color: string): Upgrade => ({
-  id: 'slow',
+const swiftStrikes = (name: string, icon: string, color: string): Upgrade => ({
+  id: 'swift',
   name,
-  description: 'Enemies move 12% slower',
+  description: 'Attacks 18% faster',
   icon,
   color,
-  available: ({ mods }) => mods.enemySpeed > 0.5,
-  apply: ({ mods }) => (mods.enemySpeed *= 0.88),
+  available: ({ player }) => player.combatCdMul > 0.55,
+  apply: ({ player }) => (player.combatCdMul *= 0.82),
+});
+
+const reach = (name: string, icon: string, color: string, extra: number): Upgrade => ({
+  id: 'reach',
+  name,
+  description: `+${extra} attack range`,
+  icon,
+  color,
+  available: ({ player }) => player.combatRange < 80,
+  apply: ({ player }) => (player.combatRange += extra),
+});
+
+const scavenger = (name: string, icon: string, color: string): Upgrade => ({
+  id: 'scavenge',
+  name,
+  description: '25% chance of +1 extra resource',
+  icon,
+  color,
+  available: ({ player }) => player.resourceLuck < 0.5,
+  apply: ({ player }) => (player.resourceLuck += 0.25),
 });
 
 export const UPGRADES: Record<CharacterId, Upgrade[]> = {
@@ -108,7 +129,39 @@ export const UPGRADES: Record<CharacterId, Upgrade[]> = {
     },
     magnet('Tractor Beam', '◎', '#c7d2dc'),
     life('Spare Clone', '☻', '#7bd66b', 3),
-    slow('Time Dilation', '◷', '#80deea'),
+    swiftStrikes('Phase Jab', '⚡', '#80deea'),
+    reach('Needle Range', '↗', '#b2ff59', 14),
+    {
+      id: 'lunge',
+      name: 'Plasma Lunge',
+      description: '+14 strike lunge',
+      icon: '➤',
+      color: '#c6ff00',
+      available: ({ player }) => player.combatLunge < 28,
+      apply: ({ player }) => (player.combatLunge += 14),
+    },
+    scavenger('Scavenger', '✦', '#cfd8dc'),
+    {
+      id: 'afterimage',
+      name: 'Afterimage',
+      description: '+0.4s invulnerability after a hit',
+      icon: '◌',
+      color: '#ea80fc',
+      available: ({ player }) => player.invulnerableTime < 3.2,
+      apply: ({ player }) => (player.invulnerableTime += 0.4),
+    },
+    coinValue('Star Dust', '★', '#ffd54f'),
+    {
+      id: 'blink-iframe',
+      name: 'Phase Exit',
+      description: 'Blinking grants 0.45s i-frames',
+      icon: '◌',
+      color: '#ff80ab',
+      available: ({ player }) => player.blinkRange > 0 && player.blinkIframes < 0.4,
+      apply: ({ player }) => {
+        player.blinkIframes = 0.45;
+      },
+    },
   ],
   knight: [
     life('Extra Heart', '♥', '#ef5350', 8),
@@ -124,7 +177,7 @@ export const UPGRADES: Record<CharacterId, Upgrade[]> = {
     {
       id: 'bash',
       name: 'Shield Bash',
-      description: 'Destroy enemies you touch while invulnerable',
+      description: 'While invulnerable, bumping a foe hits them',
       icon: '✚',
       color: '#90a4ae',
       available: ({ player }) => !player.shieldBash,
@@ -150,15 +203,60 @@ export const UPGRADES: Record<CharacterId, Upgrade[]> = {
     },
     speed('War Horse', '♞', '#bcaaa4'),
     coinValue('Royal Bounty', '♛', '#ffd54f'),
+    {
+      id: 'sweep',
+      name: 'Wide Sweep',
+      description: 'Strike in a wider arc',
+      icon: '☾',
+      color: '#90caf9',
+      available: ({ player }) => player.combatCone < 0.5,
+      apply: ({ player }) => (player.combatCone += 0.25),
+    },
+    reach('Longsword', '⚔', '#eceff1', 16),
+    {
+      id: 'crush',
+      name: 'Crushing Blow',
+      description: '+16 knockback, +0.1s stun',
+      icon: '⚒',
+      color: '#ff8a65',
+      available: ({ player }) => player.combatKnock < 36,
+      apply: ({ player }) => {
+        player.combatKnock += 16;
+        player.combatStun += 0.1;
+      },
+    },
+    swiftStrikes('Quick Guard', '⚡', '#b0bec5'),
+    {
+      id: 'rally',
+      name: 'Rally',
+      description: 'Your troops attack 20% faster',
+      icon: '⚑',
+      color: '#ffcc80',
+      available: ({ player }) => player.troopAtkMul > 0.6,
+      apply: ({ player }) => (player.troopAtkMul *= 0.8),
+    },
+    magnet('War Horn', '◎', '#d7ccc8'),
+    scavenger('Forager', '✤', '#aed581'),
   ],
   wizard: [
     magnet('Greater Pull', '◎', '#ffd54f'),
     coinValue('Golden Touch', '$', '#ffb300'),
-    slow('Frost Nova', '❄', '#80deea'),
+    {
+      id: 'frost',
+      name: 'Frost Nova',
+      description: 'Bolts stun +0.12s and knock farther',
+      icon: '❄',
+      color: '#80deea',
+      available: ({ player }) => player.combatStun < 0.28,
+      apply: ({ player }) => {
+        player.combatStun += 0.12;
+        player.combatKnock += 12;
+      },
+    },
     {
       id: 'fireball',
       name: 'Fireball',
-      description: 'Auto-cast at nearby enemies every 3s',
+      description: 'Auto-cast a bolt at the nearest foe every 3s',
       icon: '✹',
       color: '#ff7043',
       available: ({ player }) => player.fireballEvery === 0,
@@ -170,11 +268,53 @@ export const UPGRADES: Record<CharacterId, Upgrade[]> = {
       description: 'Fireball 0.5s faster',
       icon: '♨',
       color: '#ff7043',
-      available: ({ player }) => player.fireballEvery > 1,
+      available: ({ player }) => player.fireballEvery > 1.2,
       apply: ({ player }) => (player.fireballEvery -= 0.5),
     },
     speed('Haste', '✧', '#b39ddb'),
     life('Arcane Ward', '✦', '#9575cd', 3),
+    reach('Long Cast', '☄', '#ce93d8', 70),
+    {
+      id: 'twin',
+      name: 'Twin Spark',
+      description: 'Fire an extra bolt at an angle',
+      icon: '✴',
+      color: '#ea80fc',
+      available: ({ player }) => player.boltExtra < 2,
+      apply: ({ player }) => (player.boltExtra += 1),
+    },
+    swiftStrikes('Quick Incant', '⚡', '#b39ddb'),
+    {
+      id: 'mana-font',
+      name: 'Mana Font',
+      description: 'Regain 1 lost life every 28s',
+      icon: '✙',
+      color: '#81d4fa',
+      available: ({ player }) => player.regenEvery === 0,
+      apply: ({ player }) => (player.regenEvery = 28),
+    },
+    {
+      id: 'overchannel',
+      name: 'Overchannel',
+      description: 'Bolts knock +14 and stun longer',
+      icon: '☢',
+      color: '#ffab40',
+      available: ({ player }) => player.combatKnock < 40,
+      apply: ({ player }) => {
+        player.combatKnock += 14;
+        player.combatStun += 0.08;
+      },
+    },
+    scavenger('Familiar', '☽', '#fff59d'),
+    {
+      id: 'ward-up',
+      name: 'Mirror Ward',
+      description: '+0.5s invulnerability after a hit',
+      icon: '◈',
+      color: '#9575cd',
+      available: ({ player }) => player.invulnerableTime < 3.5,
+      apply: ({ player }) => (player.invulnerableTime += 0.5),
+    },
   ],
 };
 

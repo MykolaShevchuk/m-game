@@ -1,7 +1,9 @@
 import type { CharacterDef } from '@/characters';
+import { CONFIG } from '@/config';
 import type { PlayerControls } from '@/core/Input';
 import type { Rect } from '@/core/math';
-import { drawCharacter } from '@/ui/drawCharacter';
+import { ATTACK_POSE, drawCharacter } from '@/ui/drawCharacter';
+export { ATTACK_POSE };
 import type { WorldMap } from '@/world/WorldMap';
 import { Entity } from './Entity';
 
@@ -10,19 +12,49 @@ export class Player extends Entity {
   maxLives: number;
   speed: number;
   magnet: number;
+  /** Pickup box edge length; can be larger than the hurtbox (`w`/`h`). */
+  collectSize: number;
   invulnerableTime = 1.5;
 
   /** Ability stats; 0 means the ability is locked until upgraded. */
   blinkRange = 0;
   blinkCooldown = 3;
   blinkTimer = 0;
+  blinkIframes = 0.25;
   shieldBash = false;
   regenEvery = 0;
   fireballEvery = 0;
+  fireballTimer = 0;
+  combatRange = 0;
+  combatCdMul = 1;
+  combatKnock = 0;
+  combatStun = 0;
+  combatLunge = 0;
+  combatCone = 0;
+  boltExtra = 0;
+  resourceLuck = 0;
+  troopAtkMul = 1;
+  /** 1 = full, 0 = starving (still moves, but slowly). */
+  hunger = 1;
+
+  get combat() {
+    const b = this.character.combat;
+    return {
+      style: b.style,
+      cooldown: b.cooldown * this.combatCdMul,
+      range: b.range + this.combatRange,
+      cone: b.cone + this.combatCone,
+      knockback: b.knockback + this.combatKnock,
+      lunge: b.lunge + this.combatLunge,
+      stun: b.stun + this.combatStun,
+    };
+  }
 
   /** Extra occupancy check, e.g. houses. */
   blocked: (r: Rect) => boolean = () => false;
   facing = { x: 0, y: 1 };
+  /** Last left/right facing so pure vertical walks keep orientation. */
+  faceFlip = 1;
 
   attackCd = 0;
   swingT = 0;
@@ -45,6 +77,18 @@ export class Player extends Entity {
     this.lives = this.maxLives = character.lives;
     this.speed = character.speed;
     this.magnet = character.magnet;
+    this.collectSize = character.collectSize ?? character.size;
+  }
+
+  /** Larger (or equal) box used only for picking up coins and resources. */
+  collectRect(): Rect {
+    const s = this.collectSize;
+    return {
+      x: this.x + this.w / 2 - s / 2,
+      y: this.y + this.h / 2 - s / 2,
+      w: s,
+      h: s,
+    };
   }
 
   get isInvulnerable() {
@@ -79,11 +123,22 @@ export class Player extends Entity {
     if (this.canStand({ x: this.x, y: ny, w: this.w, h: this.h })) this.y = ny;
   }
 
-  /** Changes size around the current center. */
+  /** Changes hurtbox size around the current center; scales the collect box with it. */
   resize(size: number) {
+    const ratio = size / this.w;
     this.x += (this.w - size) / 2;
     this.y += (this.h - size) / 2;
     this.w = this.h = size;
+    this.collectSize *= ratio;
+  }
+
+  get hungerMul() {
+    const { minSpeed } = CONFIG.hunger;
+    return minSpeed + (1 - minSpeed) * this.hunger;
+  }
+
+  feed(amount: number) {
+    this.hunger = Math.min(1, this.hunger + amount);
   }
 
   /** Apply external axis (e.g. from network) without reading local controls. */
@@ -93,15 +148,40 @@ export class Player extends Entity {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.swingT = Math.max(0, this.swingT - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.hunger = Math.max(0, this.hunger - dt / CONFIG.hunger.duration);
     if (this.stun > 0) {
       this.walkTime = 0;
       this.tickRegen(dt);
       return;
     }
-    if (x || y) this.facing = { x, y };
-    this.slideBy(x * this.speed * dt, y * this.speed * dt);
+    if (x || y) {
+      this.facing = { x, y };
+      if (Math.abs(x) > 0.05) this.faceFlip = x < 0 ? -1 : 1;
+    }
+    if (x || y) this.walkFullSpeed(x, y, this.speed * this.hungerMul * dt);
     this.walkTime = x || y ? this.walkTime + dt : 0;
     this.tickRegen(dt);
+  }
+
+  /** Fraction of walk speed kept when sliding along a wall. */
+  private static readonly SLIDE_SPEED = 0.4;
+
+  /**
+   * Move along the input, then top up along the slide direction — but only
+   * up to SLIDE_SPEED so wall glides feel slower than open walking.
+   */
+  private walkFullSpeed(ax: number, ay: number, dist: number) {
+    const ox = this.x;
+    const oy = this.y;
+    this.slideBy(ax * dist, ay * dist);
+    const mx = this.x - ox;
+    const my = this.y - oy;
+    const moved = Math.hypot(mx, my);
+    if (moved < 1e-4 || moved >= dist - 1e-3) return;
+    const slideCap = dist * Player.SLIDE_SPEED;
+    if (moved >= slideCap) return;
+    const rem = slideCap - moved;
+    this.slideBy((mx / moved) * rem, (my / moved) * rem);
   }
 
   lunge(dist: number) {
@@ -194,7 +274,7 @@ export class Player extends Entity {
         this.x = x;
         this.y = y;
         this.blinkTimer = this.blinkCooldown;
-        this.invulnerable = Math.max(this.invulnerable, 0.25);
+        this.invulnerable = Math.max(this.invulnerable, this.blinkIframes);
         return;
       }
     }
@@ -203,7 +283,14 @@ export class Player extends Entity {
   render(ctx: CanvasRenderingContext2D) {
     const cx = this.x + this.w / 2;
     const cy = this.y + this.h / 2;
-    const opts = { facing: this.facing, walkTime: this.walkTime };
+    if (Math.abs(this.facing.x) > 0.05) this.faceFlip = this.facing.x < 0 ? -1 : 1;
+    const opts = {
+      facing: { x: this.faceFlip, y: this.facing.y },
+      walkTime: this.walkTime,
+      attackT: this.swingT,
+      attackDur: ATTACK_POSE,
+      attackStyle: this.character.combat.style,
+    };
     if (this.lives <= 0) {
       ctx.globalAlpha = 0.35;
       drawCharacter(ctx, this.character, cx, cy, this.w * 1.5, opts);

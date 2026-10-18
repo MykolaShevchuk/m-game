@@ -1,4 +1,4 @@
-import { BUILDINGS, canAfford, costList, type BuildingDef } from '@/buildings';
+import { BUILD_MENU, canAfford, costList, type BuildingDef } from '@/buildings';
 import { CONFIG } from '@/config';
 import type { Inventory } from '@/resources';
 import { drawResource } from './drawResource';
@@ -27,7 +27,7 @@ export function buildMenuCards(layout: MenuLayout = {}): MenuCardHit[] {
   const originX = layout.originX ?? 0;
   const viewW = layout.viewW ?? CONFIG.width;
   const viewH = layout.viewH ?? CONFIG.height;
-  const n = BUILDINGS.length;
+  const n = BUILD_MENU.length;
   const maxW = viewW - 16;
   const natural = n * CARD_W + (n - 1) * GAP + 16;
   const scale = Math.min(1, maxW / natural);
@@ -38,7 +38,7 @@ export function buildMenuCards(layout: MenuLayout = {}): MenuCardHit[] {
   const x = originX + (viewW - w) / 2;
   const y = viewH - h - 12;
   const cardH = CARD_H * scale - 8 * scale;
-  return BUILDINGS.map((_, i) => ({
+  return BUILD_MENU.map((_, i) => ({
     index: i,
     x: x + 8 * scale + i * (cardW + gap),
     y: y + 26 * scale,
@@ -56,7 +56,7 @@ export function drawBuildMenu(
   const originX = layout.originX ?? 0;
   const viewW = layout.viewW ?? CONFIG.width;
   const viewH = layout.viewH ?? CONFIG.height;
-  const n = BUILDINGS.length;
+  const n = BUILD_MENU.length;
   const maxW = viewW - 16;
   const natural = n * CARD_W + (n - 1) * GAP + 16;
   const scale = Math.min(1, maxW / natural);
@@ -82,7 +82,7 @@ export function drawBuildMenu(
     'center',
   );
 
-  BUILDINGS.forEach((b, i) => {
+  BUILD_MENU.forEach((b, i) => {
     const cx = x + 8 * scale + i * (cardW + gap);
     const cy = y + 26 * scale;
     const active = b.id === selected.id;
@@ -98,7 +98,9 @@ export function drawBuildMenu(
     ctx.globalAlpha = ok ? 1 : 0.45;
     drawText(ctx, `${i + 1}. ${b.name}`, cx + 6 * scale, cy + 14 * scale, Math.max(9, 12 * scale));
     ctx.globalAlpha = ok ? 0.7 : 0.35;
-    const effect = b.produces ? `${b.effect} (${b.produces.every}s)` : b.effect;
+    const effect = b.produces
+      ? `${b.effect} (×${b.produces.amount ?? 1}/${b.produces.every}s)`
+      : b.effect;
     drawText(ctx, effect, cx + 6 * scale, cy + 30 * scale, Math.max(8, 10 * scale));
     costList(b).forEach(([id, n], k) => {
       const ix = cx + 10 * scale + k * 32 * scale;

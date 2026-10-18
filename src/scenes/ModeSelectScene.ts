@@ -3,13 +3,14 @@ import type { Scene } from '@/core/Scene';
 import { hitCardIndex, pointIn } from '@/ui/hit';
 import { drawText } from '@/ui/text';
 import { CharacterSelectScene } from './CharacterSelectScene';
+import { MainMenuScene } from './MainMenuScene';
 import { OnlineLobbyScene } from './OnlineLobbyScene';
 
 export type PlayMode = 'local' | 'online';
 
 const MODES: { id: PlayMode; name: string; blurb: string }[] = [
   { id: 'local', name: 'Local Co-op', blurb: 'Split screen · WASD+FB / Arrows+MK' },
-  { id: 'online', name: 'Online Co-op', blurb: 'Dedicated server · room code' },
+  { id: 'online', name: 'Online Co-op', blurb: 'Colyseus · room code' },
 ];
 
 export class ModeSelectScene implements Scene {
@@ -91,6 +92,10 @@ export class ModeSelectScene implements Scene {
     for (let i = 0; i < n; i++) {
       if (input.wasPressed(`Digit${i + 1}`)) this.selected = i;
     }
+    if (input.wasPressed('Escape', 'Backspace')) {
+      this.game.scenes.switch(new MainMenuScene(this.game));
+      return;
+    }
     if (input.wasPressed('Enter', 'Space')) this.confirm();
   }
 
@@ -127,7 +132,7 @@ export class ModeSelectScene implements Scene {
 
     drawText(
       ctx,
-      touch ? 'Tap a mode to continue' : '← → or 1-2  ·  Enter to continue',
+      touch ? 'Tap a mode  ·  Esc back' : '← → or 1-2  ·  Enter  ·  Esc back',
       w / 2,
       h - 36,
       14,

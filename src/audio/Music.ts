@@ -1,3 +1,5 @@
+import { loadMusicEnabled } from '@/core/storage';
+
 /** Lightweight looping BGM helper. */
 export class Music {
   private audio: HTMLAudioElement | null = null;
@@ -8,9 +10,10 @@ export class Music {
     private readonly volume = 0.45,
   ) {}
 
-  /** Start looping. Safe to call more than once. */
+  /** Start looping. Safe to call more than once. Honors the settings mute. */
   async play() {
     if (this.playing) return;
+    if (!loadMusicEnabled()) return;
     if (!this.audio) {
       this.audio = new Audio(this.src);
       this.audio.loop = true;

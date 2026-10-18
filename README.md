@@ -10,7 +10,7 @@ A simple browser game built with TypeScript, HTML5 Canvas and Vite. No game engi
 ```bash
 npm install
 npm run dev       # game client (Vite, LAN-exposed)
-npm run server    # multiplayer WebSocket server on :3001
+npm run server    # Colyseus multiplayer server on :3001
 npm run dev:all   # client + server together
 npm run build     # type-check + production build into dist/
 npm run preview   # serve the production build
@@ -20,13 +20,13 @@ npm run preview   # serve the production build
 
 1. Run `npm run dev` (and `npm run server` if you want Online Co-op).
 2. On your phone’s browser, open the **Network** URL Vite prints, e.g. `http://192.168.x.x:5173`.
-3. Touch: virtual stick + F / B / BL; tap menus. Online co-op uses the same host IP for the WebSocket (port 3001).
+3. Touch: virtual stick + F / B / BL; tap menus. Online co-op uses the same host IP for Colyseus (port 3001).
 
 Start at the mode select: **Solo**, **Local Co-op** (split screen), or **Online Co-op** (room code).
 
 - Solo: WASD/arrows move, F interact, B build
 - Local co-op: P1 WASD + F/B · P2 arrows + M/K · separate inventories
-- Online: Host/Join via `npm run server`, then Enter to start
+- Online: Host/Join via Colyseus (`npm run server`), then Enter to start
 - Mobile: virtual stick + F/B/BL buttons; tap menus to choose
 - After **2 full days** (day+night ×2), PvP unlocks in co-op: bump or F/M to strike; troops attack foes; last player standing wins
 

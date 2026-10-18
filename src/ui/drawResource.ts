@@ -130,6 +130,26 @@ const ICONS: Record<ResourceId, IconFn> = {
     ctx.fill();
   },
 
+  bread(ctx, r) {
+    ctx.fillStyle = '#c4a06a';
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.08, r * 0.85, r * 0.55, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.stroke();
+    ctx.fillStyle = '#e8c888';
+    ctx.beginPath();
+    ctx.ellipse(0, -r * 0.08, r * 0.72, r * 0.42, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = 'rgba(120, 70, 30, 0.45)';
+    ctx.beginPath();
+    ctx.arc(-r * 0.2, -r * 0.05, r * 0.22, 0.2, 2.4);
+    ctx.stroke();
+    ctx.fillStyle = '#8a5230';
+    ctx.beginPath();
+    ctx.ellipse(0, r * 0.05, r * 0.12, r * 0.08, 0, 0, Math.PI * 2);
+    ctx.fill();
+  },
+
   obsidian(ctx, r) {
     ctx.fillStyle = '#2a262c';
     poly(ctx, [[-0.2, -0.9], [0.6, -0.45], [0.85, 0.3], [0.15, 0.85], [-0.75, 0.5], [-0.8, -0.3]], r);

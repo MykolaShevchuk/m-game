@@ -13,6 +13,8 @@ import {
   type VillageHut,
 } from '@/villages';
 import {
+  drawBarrel,
+  drawVillageFence,
   drawVillageGround,
   drawVillageHut,
   drawVillageSign,
@@ -80,12 +82,22 @@ export class Village extends Entity {
 
   render(ctx: CanvasRenderingContext2D) {
     this.renderGround(ctx);
-    for (const hut of this.huts) drawVillageHut(ctx, hut);
-    drawVillageStall(ctx, this.x + VILLAGE_STALL.x, this.y + VILLAGE_STALL.y, this.theme, this.ware);
+    drawVillageFence(ctx, this.x, this.y, this.theme);
+    this.huts.forEach((hut, i) => drawVillageHut(ctx, hut, i));
+    drawBarrel(ctx, this.x + 52, this.y + 92);
+    drawBarrel(ctx, this.x + 62, this.y + 96);
+    drawVillageStall(
+      ctx,
+      this.x + VILLAGE_STALL.x,
+      this.y + VILLAGE_STALL.y,
+      this.theme,
+      this.ware,
+      this.offers[1]?.giveId,
+    );
     drawWell(ctx, this.x + 108, this.y + 88);
     const shirt = rgbCss(this.theme.treeColors[0] ?? this.theme.grass);
-    drawVillager(ctx, this.x + 58, this.y + 78, shirt, this.t);
-    drawVillager(ctx, this.x + 128, this.y + 64, rgbCss(this.theme.highland), this.t + 1.2);
-    drawVillageSign(ctx, this.stallX, this.y + 42, this.name);
+    drawVillager(ctx, this.x + 58, this.y + 78, shirt, this.t, 'keeper');
+    drawVillager(ctx, this.x + 128, this.y + 64, rgbCss(this.theme.highland), this.t + 1.2, 'helper');
+    drawVillageSign(ctx, this.stallX, this.y + 40, this.name);
   }
 }

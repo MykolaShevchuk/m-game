@@ -2,19 +2,19 @@ import { CHARACTERS } from '@/characters';
 import type { Game } from '@/core/Game';
 import type { Scene } from '@/core/Scene';
 import { NetClient } from '@/net/NetClient';
-import { defaultWsUrl, type ServerMsg } from '@/net/protocol';
+import { type ServerMsg } from '@/net/protocol';
 import { drawCharacter } from '@/ui/drawCharacter';
 import { pointIn } from '@/ui/hit';
 import { drawText } from '@/ui/text';
 import { ModeSelectScene } from './ModeSelectScene';
 import { PlayScene } from './PlayScene';
 
-type Phase = 'connect' | 'menu' | 'joinCode' | 'lobby' | 'error';
+type Phase = 'menu' | 'joining' | 'joinCode' | 'lobby' | 'error';
 
 export class OnlineLobbyScene implements Scene {
-  private phase: Phase = 'connect';
+  private phase: Phase = 'menu';
   private net = new NetClient();
-  private status = 'Connecting…';
+  private status = '';
   private code = '';
   private joinBuffer = '';
   private playerId = '';
@@ -27,23 +27,13 @@ export class OnlineLobbyScene implements Scene {
   private started = false;
 
   constructor(private game: Game) {
-    void this.begin();
-  }
-
-  private async begin() {
-    try {
-      await this.net.connect(defaultWsUrl());
-      this.net.onMessage = (msg) => this.onMsg(msg);
-      this.net.onClose = () => {
+    this.net.onMessage = (msg) => this.onMsg(msg);
+    this.net.onClose = () => {
+      if (this.phase === 'lobby' || this.phase === 'joining') {
         this.phase = 'error';
         this.status = 'Disconnected from server';
-      };
-      this.phase = 'menu';
-      this.status = '';
-    } catch (e) {
-      this.phase = 'error';
-      this.status = e instanceof Error ? e.message : 'Connection failed';
-    }
+      }
+    };
   }
 
   private onMsg(msg: ServerMsg) {
@@ -51,20 +41,6 @@ export class OnlineLobbyScene implements Scene {
       this.status = msg.message;
       if (this.phase === 'joinCode') return;
       this.phase = this.phase === 'lobby' ? 'lobby' : 'error';
-      return;
-    }
-    if (msg.type === 'created') {
-      this.code = msg.code;
-      this.playerId = msg.playerId;
-      this.hostId = msg.playerId;
-      this.phase = 'lobby';
-      return;
-    }
-    if (msg.type === 'joined') {
-      this.code = msg.code;
-      this.playerId = msg.playerId;
-      this.hostId = msg.hostId;
-      this.phase = 'lobby';
       return;
     }
     if (msg.type === 'lobby') {
@@ -84,9 +60,6 @@ export class OnlineLobbyScene implements Scene {
       this.started = true;
       this.enterGame();
       return;
-    }
-    if (msg.type === 'state' && !this.started) {
-      // ignore until in game
     }
   }
 
@@ -111,9 +84,26 @@ export class OnlineLobbyScene implements Scene {
 
   private hostOrJoin() {
     if (this.menuIndex === 0) {
-      this.net.send({ type: 'create', name: this.name, character: this.selected });
+      void this.hostRoom();
     } else {
       this.beginJoin();
+    }
+  }
+
+  private async hostRoom() {
+    this.phase = 'joining';
+    this.status = 'Creating room…';
+    try {
+      await this.net.create(this.name, this.selected);
+      this.code = this.net.roomId;
+      this.playerId = this.net.sessionId;
+      this.hostId = this.net.sessionId;
+      this.phase = 'lobby';
+      this.status = '';
+      this.net.flush();
+    } catch (e) {
+      this.phase = 'error';
+      this.status = e instanceof Error ? e.message : 'Could not create room';
     }
   }
 
@@ -121,18 +111,29 @@ export class OnlineLobbyScene implements Scene {
     if (this.game.input.touchPreferred) {
       const code = window.prompt('Enter room code', this.joinBuffer || '');
       if (code && code.trim().length >= 4) {
-        this.net.send({
-          type: 'join',
-          code: code.trim().toUpperCase(),
-          name: this.name,
-          character: this.selected,
-        });
+        void this.joinRoom(code.trim().toUpperCase());
       }
       return;
     }
     this.phase = 'joinCode';
     this.joinBuffer = '';
     this.status = 'Type room code, Enter to join';
+  }
+
+  private async joinRoom(code: string) {
+    this.phase = 'joining';
+    this.status = 'Joining…';
+    try {
+      await this.net.join(code, this.name, this.selected);
+      this.code = this.net.roomId;
+      this.playerId = this.net.sessionId;
+      this.phase = 'lobby';
+      this.status = '';
+      this.net.flush();
+    } catch (e) {
+      this.phase = 'error';
+      this.status = e instanceof Error ? e.message : 'Could not join room';
+    }
   }
 
   update() {
@@ -152,10 +153,11 @@ export class OnlineLobbyScene implements Scene {
       return;
     }
 
+    if (this.phase === 'joining') return;
+
     if (this.phase === 'menu') {
       const tap = input.peekTap();
       if (tap) {
-        // Character strip: tap left/right of portrait to cycle
         if (pointIn(tap, w / 2 - 160, 100, 100, 120)) {
           input.consumeTap();
           this.cycleCharacter(-1);
@@ -171,7 +173,6 @@ export class OnlineLobbyScene implements Scene {
           this.cycleCharacter(1);
           return;
         }
-        // Host / Join buttons
         for (let i = 0; i < 2; i++) {
           const x = w / 2 - 140 + i * 160;
           if (pointIn(tap, x, 250, 140, 56)) {
@@ -196,12 +197,7 @@ export class OnlineLobbyScene implements Scene {
     if (this.phase === 'joinCode') {
       this.typeCode();
       if (input.wasPressed('Enter') && this.joinBuffer.length >= 4) {
-        this.net.send({
-          type: 'join',
-          code: this.joinBuffer.toUpperCase(),
-          name: this.name,
-          character: this.selected,
-        });
+        void this.joinRoom(this.joinBuffer.toUpperCase());
       }
       if (input.wasPressed('Backspace')) this.joinBuffer = this.joinBuffer.slice(0, -1);
       return;
@@ -229,12 +225,12 @@ export class OnlineLobbyScene implements Scene {
     const { width: w, height: h } = this.game;
     drawText(ctx, 'Online Co-op', w / 2, 48, 36, 'center');
 
-    if (this.phase === 'connect') {
+    const touch = this.game.input.touchPreferred;
+
+    if (this.phase === 'joining') {
       drawText(ctx, this.status || 'Connecting…', w / 2, h / 2, 20, 'center');
       return;
     }
-
-    const touch = this.game.input.touchPreferred;
 
     if (this.phase === 'error') {
       drawText(ctx, this.status, w / 2, h / 2 - 20, 18, 'center');

@@ -2,6 +2,8 @@ import { CHARACTERS } from '@/characters';
 
 const KEY = 'm-game:highscore';
 const CHARACTER_KEY = 'm-game:character';
+const TUTORIAL_KEY = 'm-game:tutorial';
+const MUSIC_KEY = 'm-game:music';
 
 export const loadHighScore = () => Number(localStorage.getItem(KEY) ?? 0);
 
@@ -19,4 +21,17 @@ export const loadCharacter = (): number | null => {
 
 export const saveCharacter = (index: number) => {
   localStorage.setItem(CHARACTER_KEY, String(index));
+};
+
+export const loadTutorialDone = () => localStorage.getItem(TUTORIAL_KEY) === '1';
+
+export const saveTutorialDone = () => {
+  localStorage.setItem(TUTORIAL_KEY, '1');
+};
+
+/** Music enabled by default. */
+export const loadMusicEnabled = () => localStorage.getItem(MUSIC_KEY) !== '0';
+
+export const saveMusicEnabled = (on: boolean) => {
+  localStorage.setItem(MUSIC_KEY, on ? '1' : '0');
 };
