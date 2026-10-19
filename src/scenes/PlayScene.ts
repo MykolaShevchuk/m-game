@@ -295,12 +295,12 @@ export class PlayScene implements Scene {
 
   /**
    * How much world the viewport should show, and the scale to draw it.
-   * Phones ~1200wu (closer). Desktop zooms in (~780wu) so the scene
-   * fills a large monitor instead of showing a tiny character.
+   * Narrow / touch screens use a tight target (~100wu). Desktop ~780wu.
+   * Uses viewport width (not only touchPreferred) so phones always get the zoom.
    */
   private worldView(viewW: number, viewH: number) {
-    const desktop = !this.game.input.touchPreferred;
-    const targetW = desktop ? 780 : viewW < 1100 ? 1200 : CONFIG.width;
+    const narrow = viewW < 1100 || this.game.input.touchPreferred;
+    const targetW = narrow ? 100 : 780;
     let z = viewW / targetW;
     // Never ask the camera for more than the map (portrait phones).
     if (viewH / z > CONFIG.world.height) z = viewH / CONFIG.world.height;
