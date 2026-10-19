@@ -12,7 +12,7 @@ import {
 import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
 import { Camera } from '@/core/Camera';
-import { isLandscape, type Game } from '@/core/Game';
+import type { Game } from '@/core/Game';
 import type { PlayerControls, PlayerSlot, TouchPadHandler } from '@/core/Input';
 import { overlaps, type Rect } from '@/core/math';
 import { loadTutorialDone, saveTutorialDone } from '@/core/storage';
@@ -284,24 +284,11 @@ export class PlayScene implements Scene {
     void this.pvpMusic.play();
   }
 
-  /**
-   * iPhone on its side: always P1 | P2.
-   * Portrait phones stack; iPad portrait can stay side-by-side.
-   */
-  private splitStacked(): boolean {
-    if (!this.splitScreen) return false;
-    if (isLandscape() || this.game.width >= this.game.height) return false;
-    return this.game.width / 2 < 380;
-  }
-
+  /** Local co-op is always two columns (P1 left, P2 right). */
   private agentViewport(agentId: number): { ox: number; oy: number; vw: number; vh: number } {
     const w = this.game.width;
     const h = this.game.height;
     if (!this.splitScreen) return { ox: 0, oy: 0, vw: w, vh: h };
-    if (this.splitStacked()) {
-      const hh = h / 2;
-      return { ox: 0, oy: agentId * hh, vw: w, vh: hh };
-    }
     const hw = w / 2;
     return { ox: agentId * hw, oy: 0, vw: hw, vh: h };
   }
@@ -1901,13 +1888,8 @@ export class PlayScene implements Scene {
       ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
       ctx.lineWidth = 3;
       ctx.beginPath();
-      if (this.splitStacked()) {
-        ctx.moveTo(0, h / 2);
-        ctx.lineTo(w, h / 2);
-      } else {
-        ctx.moveTo(w / 2, 0);
-        ctx.lineTo(w / 2, h);
-      }
+      ctx.moveTo(w / 2, 0);
+      ctx.lineTo(w / 2, h);
       ctx.stroke();
     } else {
       const agent = this.primaryLocal();
