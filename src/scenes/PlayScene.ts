@@ -317,6 +317,14 @@ export class PlayScene implements Scene {
     return Math.min(CONFIG.minimap.width, vw - 24);
   }
 
+  /** Inventory icon scale — compact on phones so it doesn't cover the pad. */
+  private inventoryScale(vw: number) {
+    if (this.game.input.touchPreferred || vw < 700) {
+      return this.splitScreen ? 0.55 : 0.62;
+    }
+    return this.splitScreen ? 0.85 : 1;
+  }
+
   private syncCameras() {
     for (const a of this.agents) {
       const vp = this.agentViewport(a.id);
@@ -1581,7 +1589,7 @@ export class PlayScene implements Scene {
   }
 
   private chestHintRect(vw: number, vh: number) {
-    const lift = inventoryHeight(this.splitScreen ? 0.85 : 1, vw) + 28;
+    const lift = inventoryHeight(this.inventoryScale(vw), vw) + 28;
     return { x: vw / 2 - 70, y: vh - lift - 16, w: 140, h: 28 };
   }
 
@@ -2054,7 +2062,7 @@ export class PlayScene implements Scene {
         originX: 0,
         viewW: vw,
         viewH: hudH,
-        scale: this.splitScreen ? 0.85 : 1,
+        scale: this.inventoryScale(vw),
       });
       this.renderInteractHint(ctx, agent, vw, hudH);
     }
@@ -2095,7 +2103,7 @@ export class PlayScene implements Scene {
   }
 
   private renderInteractHint(ctx: CanvasRenderingContext2D, agent: Agent, vw: number, vh: number) {
-    const lift = inventoryHeight(this.splitScreen ? 0.85 : 1, vw) + 28;
+    const lift = inventoryHeight(this.inventoryScale(vw), vw) + 28;
     const chest = this.nearestChest(agent);
     if (chest) {
       const r = this.chestHintRect(vw, vh);
