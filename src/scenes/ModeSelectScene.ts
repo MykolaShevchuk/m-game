@@ -9,7 +9,7 @@ import { OnlineLobbyScene } from './OnlineLobbyScene';
 export type PlayMode = 'local' | 'online';
 
 const MODES: { id: PlayMode; name: string; blurb: string }[] = [
-  { id: 'local', name: 'Local Co-op', blurb: 'Split screen · WASD+FB / Arrows+MK' },
+  { id: 'local', name: 'Local Co-op', blurb: 'Split screen · stick+buttons each half' },
   { id: 'online', name: 'Online Co-op', blurb: 'Colyseus · room code' },
 ];
 

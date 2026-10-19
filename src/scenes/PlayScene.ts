@@ -202,8 +202,7 @@ export class PlayScene implements Scene {
       (s) => new Village(s.x, s.y, this.map.islands[s.island].theme, s.island),
     );
 
-    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-    const viewH = this.game.height;
+    const vp0 = this.agentViewport(0);
 
     opts.characters.forEach((charIndex, i) => {
       const character = CHARACTERS[charIndex];
@@ -223,7 +222,7 @@ export class PlayScene implements Scene {
           : this.game.input.solo();
       const player = new Player(spawn.x + offset, spawn.y, controls, this.map, character, i);
       player.blocked = (r) => this.obstructs(r);
-      const camera = new Camera(viewW, viewH, this.map.width, this.map.height);
+      const camera = new Camera(vp0.vw, vp0.vh, this.map.width, this.map.height);
       camera.follow(player, Infinity);
       this.agents.push({
         id: i,
@@ -272,8 +271,8 @@ export class PlayScene implements Scene {
   }
 
   enter() {
-    // Split co-op: always show a stick+buttons pad on each half (desktop too).
-    this.game.input.setTouchUi(true, { force: this.splitScreen });
+    // Always show on-screen pads in play (esp. local co-op); force on desktop too.
+    this.game.input.setTouchUi(true, { force: true });
     this.syncTouchHandlers();
     if (this.dayNight.pvpActive) void this.pvpMusic.play();
     else void this.prePvpMusic.play();
@@ -294,23 +293,37 @@ export class PlayScene implements Scene {
     void this.pvpMusic.play();
   }
 
+  /**
+   * Portrait / narrow phones: stack screens top/bottom so each half is full width
+   * and can fit stick (left) + buttons (right). Landscape: side-by-side.
+   */
+  private splitStacked(): boolean {
+    if (!this.splitScreen) return false;
+    const { width: w, height: h } = this.game;
+    return h >= w || w / 2 < 480;
+  }
+
+  private agentViewport(agentId: number): { ox: number; oy: number; vw: number; vh: number } {
+    const w = this.game.width;
+    const h = this.game.height;
+    if (!this.splitScreen) return { ox: 0, oy: 0, vw: w, vh: h };
+    if (this.splitStacked()) {
+      const hh = h / 2;
+      return { ox: 0, oy: agentId * hh, vw: w, vh: hh };
+    }
+    const hw = w / 2;
+    return { ox: agentId * hw, oy: 0, vw: hw, vh: h };
+  }
+
   private syncCameras() {
-    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-    const viewH = this.game.height;
-    for (const a of this.agents) a.camera.resize(viewW, viewH);
+    for (const a of this.agents) {
+      const vp = this.agentViewport(a.id);
+      a.camera.resize(vp.vw, vp.vh);
+    }
   }
 
   private syncTouchHandlers() {
-    // Keep touch UI on for split-screen even if the device wasn't flagged as touch.
-    if (this.splitScreen) this.game.input.setTouchUi(true, { force: true });
-    if (!this.game.input.showTouchUi) {
-      this.touchLayouts = [];
-      this.game.input.setTouchPads([]);
-      return;
-    }
-    const w = this.game.width;
-    const h = this.game.height;
-    // Each split-screen half gets stick (left of half) + buttons (right of half).
+    this.game.input.setTouchUi(true, { force: true });
     const dual = this.splitScreen && this.agents.length >= 2;
     const padCount = dual ? 2 : 1;
     const layouts: TouchLayout[] = [];
@@ -318,15 +331,16 @@ export class PlayScene implements Scene {
 
     for (let i = 0; i < padCount; i++) {
       const slot = Math.min(i, 1) as PlayerSlot;
-      const originX = dual ? (i * w) / 2 : 0;
-      const viewW = dual ? w / 2 : w;
+      const vp = dual ? this.agentViewport(i) : { ox: 0, oy: 0, vw: this.game.width, vh: this.game.height };
       const agent = this.agents[i];
       const confirm =
         !!agent &&
         this.menuOwner === agent &&
         (agent.building || agent.recruiting || agent.trading);
-      const layout = touchLayout(viewW, h, {
-        originX,
+      const layout = touchLayout(vp.vw, this.game.height, {
+        originX: vp.ox,
+        originY: vp.oy,
+        viewH: vp.vh,
         slot,
         confirm,
         showPause: i === 0,
@@ -347,7 +361,7 @@ export class PlayScene implements Scene {
               const margin = stick.radius + 6;
               this.stickOrigins[slot] = {
                 x: Math.max(stick.hitX + margin, Math.min(stick.hitX + stick.hitW - margin, p.x)),
-                y: Math.max(stick.hitY + margin, Math.min(h - margin, p.y)),
+                y: Math.max(stick.hitY + margin, Math.min(stick.hitY + stick.hitH - margin, p.y)),
               };
             }
             const o = this.stickOrigins[slot]!;
@@ -1092,9 +1106,9 @@ export class PlayScene implements Scene {
     const input = this.game.input;
     const n = BUILD_MENU.length;
     if (agent.selectedBuilding >= n) agent.selectedBuilding = 0;
-    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-    const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
-    const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
+    const vp = this.agentViewport(agent.id);
+    const pad = this.game.input.showTouchUi ? touchBottomPad(vp.vh) : 0;
+    const menuLayout = { originX: vp.ox, viewW: vp.vw, viewH: vp.vh - pad };
     const tap = input.peekTap();
     if (tap) {
       const cards = buildMenuCards(menuLayout);
@@ -1328,9 +1342,9 @@ export class PlayScene implements Scene {
     };
 
     const input = this.game.input;
-    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-    const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
-    const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
+    const vp = this.agentViewport(agent.id);
+    const pad = this.game.input.showTouchUi ? touchBottomPad(vp.vh) : 0;
+    const menuLayout = { originX: vp.ox, viewW: vp.vw, viewH: vp.vh - pad };
     const tap = input.peekTap();
     if (tap) {
       const hit = tradeMenuCards(n, menuLayout).find((c) => pointIn(tap, c.x, c.y, c.w, c.h));
@@ -1474,12 +1488,11 @@ export class PlayScene implements Scene {
       if (nearChest) {
         const tap = this.game.input.peekTap();
         if (tap) {
-          const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-          const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
-          const hudH = this.game.height - pad;
-          const originX = this.splitScreen && agent.id === 1 ? viewW : 0;
-          const r = this.chestHintRect(viewW, hudH);
-          if (pointIn(tap, originX + r.x, r.y, r.w, r.h)) {
+          const vp = this.agentViewport(agent.id);
+          const pad = this.game.input.showTouchUi ? touchBottomPad(vp.vh) : 0;
+          const hudH = vp.vh - pad;
+          const r = this.chestHintRect(vp.vw, hudH);
+          if (pointIn(tap, vp.ox + r.x, vp.oy + r.y, r.w, r.h)) {
             this.game.input.consumeTap();
             this.openChest(nearChest);
             return;
@@ -1551,9 +1564,9 @@ export class PlayScene implements Scene {
       this.completeQuests(agent, agent.quests.report({ type: 'hire', troop: def.id }));
     };
 
-    const viewW = this.splitScreen ? this.game.width / 2 : this.game.width;
-    const pad = this.game.input.showTouchUi ? touchBottomPad(this.game.height) : 0;
-    const menuLayout = { originX: 0, viewW, viewH: this.game.height - pad };
+    const vp = this.agentViewport(agent.id);
+    const pad = this.game.input.showTouchUi ? touchBottomPad(vp.vh) : 0;
+    const menuLayout = { originX: vp.ox, viewW: vp.vw, viewH: vp.vh - pad };
     const tap = input.peekTap();
     if (tap) {
       const cards = troopMenuCards(pool, menuLayout);
@@ -1755,14 +1768,20 @@ export class PlayScene implements Scene {
     this.syncCameras();
     const { width: w, height: h } = this.game;
     if (this.splitScreen && this.agents.length >= 2) {
-      const hw = w / 2;
-      this.renderViewport(ctx, this.agents[0], 0, 0, hw, h);
-      this.renderViewport(ctx, this.agents[1], hw, 0, hw, h);
-      ctx.strokeStyle = 'rgba(255, 255, 255, 0.35)';
-      ctx.lineWidth = 2;
+      for (const agent of this.agents) {
+        const vp = this.agentViewport(agent.id);
+        this.renderViewport(ctx, agent, vp.ox, vp.oy, vp.vw, vp.vh);
+      }
+      ctx.strokeStyle = 'rgba(255, 255, 255, 0.45)';
+      ctx.lineWidth = 3;
       ctx.beginPath();
-      ctx.moveTo(hw, 0);
-      ctx.lineTo(hw, h);
+      if (this.splitStacked()) {
+        ctx.moveTo(0, h / 2);
+        ctx.lineTo(w, h / 2);
+      } else {
+        ctx.moveTo(w / 2, 0);
+        ctx.lineTo(w / 2, h);
+      }
       ctx.stroke();
     } else {
       const agent = this.primaryLocal();
@@ -1812,7 +1831,7 @@ export class PlayScene implements Scene {
       ctx.globalAlpha = 1;
     }
 
-    // Draw each player's pad on top of their screen (after viewports).
+    // Draw each player's pad clipped to their screen half.
     if (this.game.input.showTouchUi && !this.paused && !this.tutorial) {
       for (const layout of this.touchLayouts) {
         const slot = layout.slot;
@@ -1821,7 +1840,7 @@ export class PlayScene implements Scene {
         const stickActive = origin != null || axis.x !== 0 || axis.y !== 0;
         ctx.save();
         ctx.beginPath();
-        ctx.rect(layout.originX, 0, layout.viewW, h);
+        ctx.rect(layout.originX, layout.originY, layout.viewW, layout.viewH);
         ctx.clip();
         drawTouchControls(ctx, layout, stickActive ? axis : null, origin);
         ctx.restore();
