@@ -54,8 +54,9 @@ export type TouchPadHandler = {
 };
 
 /**
- * Keyboard + pointer input. Touch devices get virtual stick/buttons via
- * {@link setTouchPads}; menus use {@link consumeTap} / {@link tapIn}.
+ * Keyboard + pointer/touch input.
+ * Uses native touch events for multi-touch (required for iPad local co-op —
+ * setPointerCapture breaks the second finger on iOS Safari).
  */
 export class Input {
   private down = new Set<string>();
@@ -65,12 +66,14 @@ export class Input {
     { x: 0, y: 0 },
     { x: 0, y: 0 },
   ];
-  /** pointerId → which player's stick is dragging. */
+  /** finger/pointer id → which player's stick is dragging. */
   private stickPointers = new Map<number, PlayerSlot>();
   private buttonPointers = new Map<number, string>();
   private pendingTap: { id: number; x: number; y: number } | null = null;
   private pads: TouchPadHandler[] = [];
   private touchUi = false;
+  /** When true, ignore pointer events (touch handlers already ran). */
+  private touchActive = false;
 
   readonly touchPreferred: boolean;
 
@@ -78,8 +81,6 @@ export class Input {
     private canvas: HTMLCanvasElement,
     target: Window = window,
   ) {
-    // Don't use `'ontouchstart' in window` — Chrome desktop defines that even
-    // without a touch screen, which wrongly shows virtual stick/buttons.
     this.touchPreferred =
       (typeof navigator !== 'undefined' && navigator.maxTouchPoints > 0) ||
       window.matchMedia('(pointer: coarse)').matches;
@@ -94,6 +95,12 @@ export class Input {
       this.down.clear();
       this.clearAllSticks();
     });
+
+    // Touch path first — reliable multi-touch on iPad Safari.
+    canvas.addEventListener('touchstart', this.onTouchStart, { passive: false });
+    canvas.addEventListener('touchmove', this.onTouchMove, { passive: false });
+    canvas.addEventListener('touchend', this.onTouchEnd, { passive: false });
+    canvas.addEventListener('touchcancel', this.onTouchEnd, { passive: false });
 
     canvas.addEventListener('pointerdown', this.onPointerDown);
     canvas.addEventListener('pointermove', this.onPointerMove);
@@ -134,96 +141,125 @@ export class Input {
     this.pads = stick ? [{ slot: 0, stick, buttons }] : [];
   }
 
-  private toCanvas(e: PointerEvent): Point {
+  private clientToCanvas(clientX: number, clientY: number): Point {
     const rect = this.canvas.getBoundingClientRect();
-    const sx = this.canvas.width / rect.width;
-    const sy = this.canvas.height / rect.height;
+    const sx = this.canvas.width / Math.max(1, rect.width);
+    const sy = this.canvas.height / Math.max(1, rect.height);
     return {
-      x: (e.clientX - rect.left) * sx,
-      y: (e.clientY - rect.top) * sy,
+      x: (clientX - rect.left) * sx,
+      y: (clientY - rect.top) * sy,
     };
   }
 
-  private onPointerDown = (e: PointerEvent) => {
-    const p = this.toCanvas(e);
-    if (this.touchUi) {
-      for (const pad of this.pads) {
-        for (const b of pad.buttons) {
-          if (!b.contains(p.x, p.y)) continue;
-          const code = SLOT_ACTIONS[pad.slot][b.action] ?? b.action;
-          if (!this.down.has(code)) this.pressed.add(code);
-          this.down.add(code);
-          this.buttonPointers.set(e.pointerId, code);
-          try {
-            this.canvas.setPointerCapture(e.pointerId);
-          } catch {
-            /* synthetic / unsupported */
-          }
-          e.preventDefault();
-          return;
-        }
-      }
-      for (const pad of this.pads) {
-        if (!pad.stick.contains(p.x, p.y)) continue;
-        // One stick finger per player.
-        for (const [, slot] of this.stickPointers) {
-          if (slot === pad.slot) return;
-        }
-        this.stickPointers.set(e.pointerId, pad.slot);
-        pad.stick.setAxis(p);
-        try {
-          this.canvas.setPointerCapture(e.pointerId);
-        } catch {
-          /* synthetic / unsupported */
-        }
-        e.preventDefault();
-        return;
+  private toCanvas(e: PointerEvent): Point {
+    return this.clientToCanvas(e.clientX, e.clientY);
+  }
+
+  private pressAt(id: number, p: Point): boolean {
+    if (!this.touchUi) return false;
+    for (const pad of this.pads) {
+      for (const b of pad.buttons) {
+        if (!b.contains(p.x, p.y)) continue;
+        const code = SLOT_ACTIONS[pad.slot][b.action] ?? b.action;
+        if (!this.down.has(code)) this.pressed.add(code);
+        this.down.add(code);
+        this.buttonPointers.set(id, code);
+        return true;
       }
     }
+    for (const pad of this.pads) {
+      if (!pad.stick.contains(p.x, p.y)) continue;
+      for (const [, slot] of this.stickPointers) {
+        if (slot === pad.slot) return true;
+      }
+      this.stickPointers.set(id, pad.slot);
+      pad.stick.setAxis(p);
+      return true;
+    }
+    return false;
+  }
 
-    this.pendingTap = { id: e.pointerId, x: p.x, y: p.y };
-    try {
-      this.canvas.setPointerCapture(e.pointerId);
-    } catch {
-      /* synthetic / unsupported */
+  private moveAt(id: number, p: Point) {
+    const slot = this.stickPointers.get(id);
+    if (slot != null) {
+      const pad = this.pads.find((t) => t.slot === slot);
+      pad?.stick.setAxis(p);
+      return;
+    }
+    if (this.pendingTap && this.pendingTap.id === id) {
+      const dx = p.x - this.pendingTap.x;
+      const dy = p.y - this.pendingTap.y;
+      if (dx * dx + dy * dy > 20 * 20) this.pendingTap = null;
+    }
+  }
+
+  private releaseAt(id: number) {
+    const btn = this.buttonPointers.get(id);
+    if (btn) {
+      this.down.delete(btn);
+      this.buttonPointers.delete(id);
+    }
+
+    const slot = this.stickPointers.get(id);
+    if (slot != null) {
+      this.clearStick(slot, id);
+      return;
+    }
+
+    if (this.pendingTap && this.pendingTap.id === id) {
+      this.taps.push({ x: this.pendingTap.x, y: this.pendingTap.y });
+      this.pendingTap = null;
+    }
+  }
+
+  private onTouchStart = (e: TouchEvent) => {
+    this.touchActive = true;
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      const p = this.clientToCanvas(t.clientX, t.clientY);
+      if (!this.pressAt(t.identifier, p)) {
+        this.pendingTap = { id: t.identifier, x: p.x, y: p.y };
+      }
+    }
+  };
+
+  private onTouchMove = (e: TouchEvent) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      const t = e.changedTouches[i];
+      this.moveAt(t.identifier, this.clientToCanvas(t.clientX, t.clientY));
+    }
+  };
+
+  private onTouchEnd = (e: TouchEvent) => {
+    e.preventDefault();
+    for (let i = 0; i < e.changedTouches.length; i++) {
+      this.releaseAt(e.changedTouches[i].identifier);
+    }
+    if (e.touches.length === 0) this.touchActive = false;
+  };
+
+  private onPointerDown = (e: PointerEvent) => {
+    // Skip mouse/pen duplicates while a real touch sequence is active,
+    // and skip touch-typed pointers (handled by touch* listeners).
+    if (this.touchActive || e.pointerType === 'touch') return;
+    const p = this.toCanvas(e);
+    if (!this.pressAt(e.pointerId, p)) {
+      this.pendingTap = { id: e.pointerId, x: p.x, y: p.y };
     }
     e.preventDefault();
   };
 
   private onPointerMove = (e: PointerEvent) => {
-    const p = this.toCanvas(e);
-    const slot = this.stickPointers.get(e.pointerId);
-    if (slot != null) {
-      const pad = this.pads.find((t) => t.slot === slot);
-      pad?.stick.setAxis(p);
-      e.preventDefault();
-      return;
-    }
-    if (this.pendingTap && this.pendingTap.id === e.pointerId) {
-      const dx = p.x - this.pendingTap.x;
-      const dy = p.y - this.pendingTap.y;
-      if (dx * dx + dy * dy > 20 * 20) this.pendingTap = null;
-    }
+    if (this.touchActive || e.pointerType === 'touch') return;
+    this.moveAt(e.pointerId, this.toCanvas(e));
+    e.preventDefault();
   };
 
   private onPointerUp = (e: PointerEvent) => {
-    const btn = this.buttonPointers.get(e.pointerId);
-    if (btn) {
-      this.down.delete(btn);
-      this.buttonPointers.delete(e.pointerId);
-    }
-
-    const slot = this.stickPointers.get(e.pointerId);
-    if (slot != null) {
-      this.clearStick(slot, e.pointerId);
-      e.preventDefault();
-      return;
-    }
-
-    if (this.pendingTap && this.pendingTap.id === e.pointerId) {
-      this.taps.push({ x: this.pendingTap.x, y: this.pendingTap.y });
-      this.pendingTap = null;
-    }
+    if (e.pointerType === 'touch') return;
+    this.releaseAt(e.pointerId);
   };
 
   private clearStick(slot: PlayerSlot, pointerId?: number) {

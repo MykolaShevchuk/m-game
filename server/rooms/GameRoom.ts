@@ -9,6 +9,13 @@ import {
   type BuildingId,
 } from '../../src/buildings';
 import { CHARACTERS } from '../../src/characters';
+import {
+  CHEST_COINS,
+  CHEST_COUNT,
+  CHEST_LOOT,
+  CHEST_OPEN_RANGE,
+  CHEST_SIZE,
+} from '../../src/chests';
 import { CONFIG } from '../../src/config';
 import {
   MAX_PLAYERS,
@@ -18,14 +25,24 @@ import {
   type PlayerSnap,
   type ServerMsg,
 } from '../../src/net/protocol';
-import { emptyInventory, FOODS } from '../../src/resources';
+import {
+  emptyInventory,
+  FOODS,
+  RESOURCES,
+  rollResource,
+  type ResourceId,
+} from '../../src/resources';
 import { TROOP_BY_ID, canAffordTroop, spendTroop } from '../../src/troops';
+import { isKnownTradeDeal, tradeDealKey } from '../../src/villages';
+import { mulberry32 } from '../../src/world/noise';
 
 const TICK_HZ = 20;
 const FULL_DAY = CONFIG.dayNightPhase * 2;
 const PVP_AFTER = CONFIG.pvpAfterFullDays * FULL_DAY;
 const HIT_RANGE = 52;
 const INVULN = 1.5;
+const BUILD_RANGE = 160;
+const TRADE_STOCK = 8;
 
 interface NetPlayer {
   id: string;
@@ -40,8 +57,25 @@ interface NetPlayer {
   ax: number;
   ay: number;
   lives: number;
+  maxLives: number;
   alive: boolean;
   invuln: number;
+}
+
+interface NetHouse {
+  id: number;
+  building: BuildingId;
+  x: number;
+  y: number;
+  ownerId: string;
+  produceTimer: number;
+}
+
+interface NetChest {
+  id: number;
+  x: number;
+  y: number;
+  opened: boolean;
 }
 
 interface JoinOptions {
@@ -56,6 +90,19 @@ function roomCode() {
   return s;
 }
 
+function rectsOverlap(
+  ax: number,
+  ay: number,
+  aw: number,
+  ah: number,
+  bx: number,
+  by: number,
+  bw: number,
+  bh: number,
+) {
+  return ax < bx + bw && ax + aw > bx && ay < by + bh && ay + ah > by;
+}
+
 export class GameRoom extends Room {
   maxClients = MAX_PLAYERS;
   /** Message-based sync — no Schema patches. */
@@ -68,8 +115,8 @@ export class GameRoom extends Room {
   private dayElapsed = 0;
   private players = new Map<string, NetPlayer>();
   private coins: { id: number; x: number; y: number }[] = [];
-  private resources: { id: number; x: number; y: number; type: string }[] = [];
-  private houses: { id: number; building: BuildingId; x: number; y: number; ownerId: string }[] = [];
+  private resources: { id: number; x: number; y: number; type: ResourceId }[] = [];
+  private houses: NetHouse[] = [];
   private troops: {
     id: number;
     troop: string;
@@ -78,9 +125,14 @@ export class GameRoom extends Room {
     ownerId: string;
     order: 'follow' | 'garrison';
   }[] = [];
+  private chests: NetChest[] = [];
+  private tradeStock = new Map<string, number>();
   private nextCoinId = 1;
+  private nextResId = 1;
   private nextHouseId = 1;
   private nextTroopId = 1;
+  private nextChestId = 1;
+  private rand: () => number = Math.random;
 
   onCreate() {
     this.roomId = roomCode();
@@ -91,16 +143,26 @@ export class GameRoom extends Room {
       if (!player) return;
       player.ax = Number(msg?.ax) || 0;
       player.ay = Number(msg?.ay) || 0;
+      if (player.ax || player.ay) {
+        const len = Math.hypot(player.ax, player.ay) || 1;
+        player.facingX = player.ax / len;
+        player.facingY = player.ay / len;
+      }
     });
     this.onMessage(
       'pose',
       (client, msg: { x?: number; y?: number; facingX?: number; facingY?: number }) => {
         const player = this.players.get(client.sessionId);
-        if (!player) return;
-        if (typeof msg?.x === 'number') player.x = msg.x;
-        if (typeof msg?.y === 'number') player.y = msg.y;
-        if (typeof msg?.facingX === 'number') player.facingX = msg.facingX;
-        if (typeof msg?.facingY === 'number') player.facingY = msg.facingY;
+        if (!player || !player.alive) return;
+        // Client pose is authoritative (client runs map collision). Clamp to world.
+        if (typeof msg?.x === 'number' && Number.isFinite(msg.x)) {
+          player.x = Math.min(CONFIG.world.width - 8, Math.max(0, msg.x));
+        }
+        if (typeof msg?.y === 'number' && Number.isFinite(msg.y)) {
+          player.y = Math.min(CONFIG.world.height - 8, Math.max(0, msg.y));
+        }
+        if (typeof msg?.facingX === 'number' && Number.isFinite(msg.facingX)) player.facingX = msg.facingX;
+        if (typeof msg?.facingY === 'number' && Number.isFinite(msg.facingY)) player.facingY = msg.facingY;
       },
     );
     this.onMessage('action', (client, action: ClientAction) => {
@@ -150,6 +212,7 @@ export class GameRoom extends Room {
     this.started = true;
     this.lock();
     this.seed = Math.floor(Math.random() * 2 ** 31);
+    this.rand = mulberry32(this.seed ^ 0xc0ffee);
     this.spawnWorld();
 
     let i = 0;
@@ -177,11 +240,25 @@ export class GameRoom extends Room {
     this.dayElapsed += dt;
     for (const p of this.players.values()) {
       p.invuln = Math.max(0, p.invuln - dt);
-      if (!p.alive) continue;
-      p.x += p.ax * 260 * dt;
-      p.y += p.ay * 260 * dt;
     }
+    this.tickProduction(dt);
     this.broadcastMsg({ type: 'state', state: this.snapshot() });
+  }
+
+  private tickProduction(dt: number) {
+    for (const h of this.houses) {
+      const def = BUILDING_BY_ID[h.building];
+      const prod = def?.produces;
+      if (!prod) continue;
+      h.produceTimer += dt;
+      while (h.produceTimer >= prod.every) {
+        h.produceTimer -= prod.every;
+        const owner = this.players.get(h.ownerId);
+        if (!owner) continue;
+        const amount = prod.amount ?? 1;
+        owner.inventory[prod.resource] += amount;
+      }
+    }
   }
 
   private makePlayer(id: string, name: string, character: number): NetPlayer {
@@ -199,6 +276,7 @@ export class GameRoom extends Room {
       ax: 0,
       ay: 0,
       lives: def.lives,
+      maxLives: def.lives,
       alive: true,
       invuln: 0,
     };
@@ -238,22 +316,82 @@ export class GameRoom extends Room {
       dayElapsed: this.dayElapsed,
       players,
       coins: this.coins,
-      resources: this.resources as GameStateSnap['resources'],
-      houses: this.houses as GameStateSnap['houses'],
+      resources: this.resources,
+      houses: this.houses.map((h) => {
+        const every = BUILDING_BY_ID[h.building]?.produces?.every;
+        return {
+          id: h.id,
+          building: h.building,
+          x: h.x,
+          y: h.y,
+          ownerId: h.ownerId,
+          produceProgress: every ? Math.min(1, h.produceTimer / every) : undefined,
+        };
+      }),
       troops: this.troops as GameStateSnap['troops'],
+      chests: this.chests,
     };
   }
 
   private spawnWorld() {
     this.coins = [];
     this.resources = [];
-    for (let i = 0; i < 40; i++) {
+    this.chests = [];
+    const { width, height } = CONFIG.world;
+    const coinSize = CONFIG.coin.size;
+    const resSize = CONFIG.resource.size;
+
+    for (let i = 0; i < CONFIG.coin.count; i++) {
       this.coins.push({
         id: this.nextCoinId++,
-        x: 400 + (i % 10) * 80,
-        y: 400 + Math.floor(i / 10) * 80,
+        x: 80 + this.rand() * (width - 160 - coinSize),
+        y: 80 + this.rand() * (height - 160 - coinSize),
       });
     }
+
+    const themes = ['Greenwood', 'Pine Isle', 'Frost Isle', 'Ember Isle', 'Palm Isle'];
+    for (let i = 0; i < CONFIG.resource.count; i++) {
+      const theme = themes[i % themes.length];
+      this.resources.push({
+        id: this.nextResId++,
+        x: 80 + this.rand() * (width - 160 - resSize),
+        y: 80 + this.rand() * (height - 160 - resSize),
+        type: rollResource(theme),
+      });
+    }
+
+    // Far corners / edges for chests (clients refine onto land via their map).
+    const anchors = [
+      { x: width * 0.12, y: height * 0.18 },
+      { x: width * 0.88, y: height * 0.22 },
+      { x: width * 0.55, y: height * 0.85 },
+    ];
+    for (let i = 0; i < CHEST_COUNT; i++) {
+      const a = anchors[i % anchors.length];
+      this.chests.push({
+        id: this.nextChestId++,
+        x: a.x + (this.rand() - 0.5) * 120 - CHEST_SIZE / 2,
+        y: a.y + (this.rand() - 0.5) * 120 - CHEST_SIZE / 2,
+        opened: false,
+      });
+    }
+  }
+
+  private canPlaceBuilding(player: NetPlayer, building: BuildingId, x: number, y: number) {
+    const def = BUILDING_BY_ID[building];
+    if (!def || def.buildable === false) return false;
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return false;
+    if (x < 0 || y < 0 || x + def.w > CONFIG.world.width || y + def.h > CONFIG.world.height) return false;
+
+    const cx = x + def.w / 2;
+    const cy = y + def.h / 2;
+    if (Math.hypot(cx - (player.x + 12), cy - (player.y + 12)) > BUILD_RANGE) return false;
+
+    for (const h of this.houses) {
+      const hd = BUILDING_BY_ID[h.building];
+      if (rectsOverlap(x, y, def.w, def.h, h.x, h.y, hd.w, hd.h)) return false;
+    }
+    return true;
   }
 
   private handleAction(player: NetPlayer, action: ClientAction) {
@@ -272,13 +410,13 @@ export class GameRoom extends Room {
       const r = this.resources[idx];
       if (Math.hypot(r.x - player.x, r.y - player.y) > 120) return;
       this.resources.splice(idx, 1);
-      const type = r.type as keyof Inventory;
-      if (type in player.inventory) player.inventory[type]++;
+      if (r.type in player.inventory) player.inventory[r.type]++;
       return;
     }
     if (action.kind === 'build') {
       const def = BUILDINGS.find((b) => b.id === action.building);
       if (!def || def.buildable === false || !canAfford(player.inventory, def)) return;
+      if (!this.canPlaceBuilding(player, def.id, action.x, action.y)) return;
       spend(player.inventory, def);
       this.houses.push({
         id: this.nextHouseId++,
@@ -286,6 +424,7 @@ export class GameRoom extends Room {
         x: action.x,
         y: action.y,
         ownerId: player.id,
+        produceTimer: 0,
       });
       this.tryMergeMansion(player.id, action.x + def.w / 2, action.y + def.h / 2);
       return;
@@ -293,12 +432,13 @@ export class GameRoom extends Room {
     if (action.kind === 'hire') {
       const def = TROOP_BY_ID[action.troop];
       if (!def || !canAffordTroop(player.inventory, def)) return;
-      const hut = this.houses.find((h) => h.id === action.hutId);
+      const hut = this.houses.find((h) => h.id === action.hutId && h.ownerId === player.id);
       const hutDef = hut ? BUILDING_BY_ID[hut.building] : undefined;
-      if (!hutDef?.recruits?.includes(action.troop)) return;
+      if (!hut || !hutDef?.recruits?.includes(action.troop)) return;
+      if (Math.hypot(hut.x - player.x, hut.y - player.y) > 160) return;
       spendTroop(player.inventory, def);
-      const x = (hut?.x ?? player.x) + 20;
-      const y = (hut?.y ?? player.y) + 20;
+      const x = hut.x + hutDef.w / 2;
+      const y = hut.y + hutDef.h / 2;
       this.troops.push({
         id: this.nextTroopId++,
         troop: def.id,
@@ -313,15 +453,25 @@ export class GameRoom extends Room {
       for (const t of this.troops) {
         if (t.ownerId === player.id) t.order = action.station ? 'garrison' : 'follow';
       }
+      return;
     }
 
     if (action.kind === 'trade') {
       const give = Object.entries(action.give) as [keyof Inventory, number][];
       const get = Object.entries(action.get) as [keyof Inventory, number][];
-      if (give.some(([id, n]) => n <= 0 || !(id in player.inventory) || player.inventory[id] < n)) return;
-      if (get.some(([id, n]) => n <= 0 || !(id in player.inventory))) return;
-      for (const [id, n] of give) player.inventory[id] -= n;
-      for (const [id, n] of get) player.inventory[id] += n;
+      if (give.length !== 1 || get.length !== 1) return;
+      const [giveId, giveN] = give[0];
+      const [getId, getN] = get[0];
+      if (!RESOURCES.some((r) => r.id === giveId) || !RESOURCES.some((r) => r.id === getId)) return;
+      if (!isKnownTradeDeal(giveId, giveN, getId, getN)) return;
+      if (giveN <= 0 || getN <= 0) return;
+      if (player.inventory[giveId] < giveN) return;
+      const key = tradeDealKey(giveId, giveN, getId, getN);
+      const stock = this.tradeStock.get(key) ?? TRADE_STOCK;
+      if (stock <= 0) return;
+      this.tradeStock.set(key, stock - 1);
+      player.inventory[giveId] -= giveN;
+      player.inventory[getId] += getN;
       return;
     }
 
@@ -329,6 +479,48 @@ export class GameRoom extends Room {
       if (!FOODS.some((f) => f.id === action.id)) return;
       if ((player.inventory[action.id] ?? 0) <= 0) return;
       player.inventory[action.id]--;
+      return;
+    }
+
+    if (action.kind === 'openChest') {
+      const chest = this.chests.find((c) => c.id === action.chestId);
+      if (!chest || chest.opened) return;
+      if (Math.hypot(chest.x - player.x, chest.y - player.y) > CHEST_OPEN_RANGE) return;
+      chest.opened = true;
+      const cx = chest.x + CHEST_SIZE / 2;
+      const cy = chest.y + CHEST_SIZE / 2;
+      CHEST_LOOT.forEach((type, i) => {
+        const ang = (i / CHEST_LOOT.length) * Math.PI * 2 + 0.4;
+        const dist = 34 + (i % 4) * 12;
+        this.resources.push({
+          id: this.nextResId++,
+          x: cx + Math.cos(ang) * dist - CONFIG.resource.size / 2,
+          y: cy + Math.sin(ang) * dist - CONFIG.resource.size / 2,
+          type,
+        });
+      });
+      for (let i = 0; i < CHEST_COINS; i++) {
+        const ang = (i / CHEST_COINS) * Math.PI * 2;
+        const dist = 22 + (i % 3) * 10;
+        this.coins.push({
+          id: this.nextCoinId++,
+          x: cx + Math.cos(ang) * dist - CONFIG.coin.size / 2,
+          y: cy + Math.sin(ang) * dist - CONFIG.coin.size / 2,
+        });
+      }
+      return;
+    }
+
+    if (action.kind === 'syncLives') {
+      const lives = Math.floor(action.lives);
+      const maxLives = Math.floor(action.maxLives);
+      if (!Number.isFinite(lives) || !Number.isFinite(maxLives)) return;
+      if (maxLives < 1 || maxLives > 12 || lives < 0 || lives > maxLives) return;
+      // Only allow increasing max (upgrades); lives may match the new max.
+      if (maxLives < player.maxLives) return;
+      if (maxLives > player.maxLives + 2) return;
+      player.maxLives = maxLives;
+      player.lives = Math.min(maxLives, Math.max(player.lives, lives));
       return;
     }
 
@@ -373,6 +565,7 @@ export class GameRoom extends Room {
       x: spot.x,
       y: spot.y,
       ownerId,
+      produceTimer: 0,
     });
   }
 

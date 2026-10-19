@@ -34,6 +34,15 @@ export interface HouseSnap {
   x: number;
   y: number;
   ownerId: string;
+  /** 0..1 production progress for drip buildings. */
+  produceProgress?: number;
+}
+
+export interface ChestSnap {
+  id: number;
+  x: number;
+  y: number;
+  opened: boolean;
 }
 
 export interface TroopSnap {
@@ -67,6 +76,7 @@ export interface GameStateSnap {
   resources: ResourceSnap[];
   houses: HouseSnap[];
   troops: TroopSnap[];
+  chests: ChestSnap[];
 }
 
 /** In-room messages (create/join go through the Colyseus SDK). */
@@ -85,7 +95,9 @@ export type ClientAction =
   | { kind: 'menuNav'; menu: 'build' | 'recruit' | 'none' }
   | { kind: 'hit'; targetId: string }
   | { kind: 'trade'; give: Partial<Inventory>; get: Partial<Inventory> }
-  | { kind: 'eat'; id: ResourceId };
+  | { kind: 'eat'; id: ResourceId }
+  | { kind: 'openChest'; chestId: number }
+  | { kind: 'syncLives'; lives: number; maxLives: number };
 
 export type ServerMsg =
   | { type: 'error'; message: string }

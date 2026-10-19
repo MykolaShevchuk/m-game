@@ -32,6 +32,13 @@ export class House extends Entity {
     return Math.max(0, every - this.produceTimer);
   }
 
+  /** Apply server-synced progress (0..1) without resetting the building. */
+  syncProduceProgress(progress: number) {
+    const every = this.def.produces?.every;
+    if (!every) return;
+    this.produceTimer = Math.min(every, Math.max(0, progress) * every);
+  }
+
   /** Returns a resource id when this building finishes a production tick. */
   update(dt: number): ResourceId | null {
     const prod = this.def.produces;

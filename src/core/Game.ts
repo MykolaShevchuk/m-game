@@ -21,12 +21,15 @@ export class Game {
     this.scenes = new SceneManager();
     this.fitToWindow();
     window.addEventListener('resize', this.fitToWindow);
+    window.visualViewport?.addEventListener('resize', this.fitToWindow);
+    window.visualViewport?.addEventListener('scroll', this.fitToWindow);
   }
 
-  /** Match the canvas buffer to the browser window. */
+  /** Match the canvas buffer to the visible viewport (iPad Safari chrome-safe). */
   readonly fitToWindow = () => {
-    const w = Math.max(1, Math.round(window.innerWidth));
-    const h = Math.max(1, Math.round(window.innerHeight));
+    const vv = window.visualViewport;
+    const w = Math.max(1, Math.round(vv?.width ?? window.innerWidth));
+    const h = Math.max(1, Math.round(vv?.height ?? window.innerHeight));
     if (w === this.width && h === this.height && this.canvas.width === w && this.canvas.height === h) return;
     this.width = w;
     this.height = h;

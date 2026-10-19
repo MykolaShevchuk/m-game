@@ -18,7 +18,14 @@ import { overlaps, type Rect } from '@/core/math';
 import { loadTutorialDone, saveTutorialDone } from '@/core/storage';
 import type { Scene } from '@/core/Scene';
 import { Bolt } from '@/entities/Bolt';
-import { Chest, CHEST_SIZE } from '@/entities/Chest';
+import {
+  CHEST_COINS,
+  CHEST_COUNT,
+  CHEST_LOOT,
+  CHEST_MIN_SPREAD,
+  CHEST_SIZE,
+} from '@/chests';
+import { Chest } from '@/entities/Chest';
 import { Coin } from '@/entities/Coin';
 import { House } from '@/entities/House';
 import { Player } from '@/entities/Player';
@@ -36,7 +43,7 @@ import {
   type Inventory,
   type ResourceId,
 } from '@/resources';
-import { canAffordTroop, spendTroop, troopsFor } from '@/troops';
+import { TROOP_BY_ID, canAffordTroop, spendTroop, troopsFor } from '@/troops';
 import { buildMenuCards, drawBuildMenu } from '@/ui/buildMenu';
 import { drawSwingFx, type SwingFx } from '@/ui/combatFx';
 import { ATTACK_POSE } from '@/ui/drawCharacter';
@@ -88,37 +95,7 @@ const TROOP_PROTECT_RANGE = 96;
 /** Barracks battle-line spacing / stand-off from the building. */
 const FORM_SPACING = 24;
 const FORM_FORWARD = 40;
-const CHEST_COUNT = 3;
-const CHEST_MIN_SPREAD = 900;
-/** Coins + stacked resource piles dumped when a chest opens. */
-const CHEST_COINS = 18;
-const CHEST_LOOT: ResourceId[] = [
-  'wood',
-  'wood',
-  'wood',
-  'wood',
-  'wood',
-  'wood',
-  'stone',
-  'stone',
-  'stone',
-  'stone',
-  'stone',
-  'crystal',
-  'crystal',
-  'crystal',
-  'obsidian',
-  'obsidian',
-  'berries',
-  'berries',
-  'berries',
-  'berries',
-  'shell',
-  'shell',
-  'cactusFruit',
-  'bread',
-  'bread',
-];
+const SHIELD_BASH_CD = 0.45;
 
 interface Agent {
   id: number;
@@ -160,6 +137,8 @@ export class PlayScene implements Scene {
   private resources: Resource[] = [];
   private chests: Chest[] = [];
   private popups = new Popups();
+  /** Optimistic eat — roll back hunger if the server rejects. */
+  private eatExpect: { id: ResourceId; count: number; restore: number } | null = null;
   private paused = false;
   private banner = { text: '', time: 0 };
   private houses: House[] = [];
@@ -263,6 +242,18 @@ export class PlayScene implements Scene {
     }
   }
 
+  private syncLivesToServer(agent: Agent) {
+    if (!this.net || agent.remote) return;
+    this.net.send({
+      type: 'action',
+      action: {
+        kind: 'syncLives',
+        lives: agent.player.lives,
+        maxLives: agent.player.maxLives,
+      },
+    });
+  }
+
   private primaryLocal(): Agent {
     if (this.net && this.localNetId) {
       return this.agents.find((a) => a.netId === this.localNetId) ?? this.agents[0];
@@ -294,14 +285,12 @@ export class PlayScene implements Scene {
   }
 
   /**
-   * Stack top/bottom when portrait, or when a side-by-side half would be too
-   * narrow for stick+buttons. iPad landscape stays side-by-side (each half ~500–600px).
+   * Side-by-side whenever each half is wide enough for stick+buttons (iPad
+   * portrait ~410px halves still work). Only stack on narrow phones.
    */
   private splitStacked(): boolean {
     if (!this.splitScreen) return false;
-    const { width: w, height: h } = this.game;
-    const minHalfForSideBySide = 420;
-    return h > w || w / 2 < minHalfForSideBySide;
+    return this.game.width / 2 < 380;
   }
 
   private agentViewport(agentId: number): { ox: number; oy: number; vw: number; vh: number } {
@@ -316,10 +305,23 @@ export class PlayScene implements Scene {
     return { ox: agentId * hw, oy: 0, vw: hw, vh: h };
   }
 
+  /**
+   * Screen pixels per world pixel. On phones (narrower than the design width)
+   * this drops below 1 so the camera zooms out to roughly desktop FOV.
+   */
+  private worldZoom(viewW: number) {
+    return Math.min(1, viewW / CONFIG.width);
+  }
+
+  private minimapWidth(vw: number) {
+    return Math.min(CONFIG.minimap.width, Math.round(vw * 0.34), Math.max(96, vw - 24));
+  }
+
   private syncCameras() {
     for (const a of this.agents) {
       const vp = this.agentViewport(a.id);
-      a.camera.resize(vp.vw, vp.vh);
+      const z = this.worldZoom(vp.vw);
+      a.camera.resize(vp.vw / z, vp.vh / z);
     }
   }
 
@@ -458,9 +460,11 @@ export class PlayScene implements Scene {
       if (agent.picker) {
         const choice = agent.picker.update(this.game.input, this.game.width, this.game.height);
         if (choice) {
+          const livesBefore = agent.player.maxLives;
           choice.apply({ player: agent.player, mods: agent.mods });
           agent.upgradesTaken.push(choice);
           agent.picker = null;
+          if (agent.player.maxLives !== livesBefore) this.syncLivesToServer(agent);
           this.checkUpgrade(agent);
         }
         return;
@@ -682,15 +686,17 @@ export class PlayScene implements Scene {
 
   private tickShieldBash(agent: Agent) {
     const p = agent.player;
-    if (!p.shieldBash || !p.isInvulnerable || p.lives <= 0) return;
+    if (!p.shieldBash || !p.isInvulnerable || p.lives <= 0 || p.shieldBashCd > 0) return;
     for (const foe of this.agents) {
       if (foe === agent || foe.player.lives <= 0) continue;
       if (!overlaps(p, foe.player)) continue;
+      p.shieldBashCd = SHIELD_BASH_CD;
       this.dealHit(agent, foe, {
         knockback: p.combat.knockback + 22,
         stun: p.combat.stun + 0.12,
         label: 'Bash!',
       });
+      return;
     }
   }
 
@@ -968,7 +974,9 @@ export class PlayScene implements Scene {
       }
     }
 
-    // Sync remote player poses / create missing agents
+    const present = new Set(state.players.map((p) => p.id));
+    this.agents = this.agents.filter((a) => !a.netId || present.has(a.netId));
+
     for (const snap of state.players) {
       let agent = this.agents.find((a) => a.netId === snap.id);
       if (!agent) {
@@ -980,8 +988,9 @@ export class PlayScene implements Scene {
         const camera = new Camera(viewW, this.game.height, this.map.width, this.map.height);
         camera.follow(player, Infinity);
         const isLocal = snap.id === this.localNetId;
+        const nextId = this.agents.reduce((m, a) => Math.max(m, a.id), -1) + 1;
         agent = {
-          id: this.agents.length,
+          id: nextId,
           netId: snap.id,
           player,
           camera,
@@ -1007,37 +1016,57 @@ export class PlayScene implements Scene {
       }
       agent.score = snap.score;
       agent.inventory = { ...snap.inventory };
-      const prevLives = agent.player.lives;
-      agent.player.lives = snap.alive ? snap.lives : 0;
-      if (prevLives > agent.player.lives) agent.player.flashHurt();
+
       if (agent.remote) {
+        const prevLives = agent.player.lives;
+        agent.player.lives = snap.alive ? snap.lives : 0;
+        if (prevLives > agent.player.lives) agent.player.flashHurt();
         const moved = Math.hypot(snap.x - agent.player.x, snap.y - agent.player.y) > 0.5;
         agent.player.x = snap.x;
         agent.player.y = snap.y;
         agent.player.facing = { x: snap.facingX, y: snap.facingY };
         agent.player.walkTime = moved ? agent.player.walkTime + 1 / 20 : 0;
+      } else {
+        // Local: accept damage from server; keep upgrade life bonuses above server baseline.
+        const serverLives = snap.alive ? snap.lives : 0;
+        if (!snap.alive) {
+          if (agent.player.lives > 0) agent.player.flashHurt();
+          agent.player.lives = 0;
+        } else if (serverLives < agent.player.lives) {
+          agent.player.lives = serverLives;
+          agent.player.flashHurt();
+        }
+        if (this.eatExpect && agent === this.primaryLocal()) {
+          if (agent.inventory[this.eatExpect.id] > this.eatExpect.count) {
+            agent.player.hunger = Math.max(0, agent.player.hunger - this.eatExpect.restore);
+          }
+          this.eatExpect = null;
+        }
       }
     }
     this.checkCombatEnd();
 
-    // World entities from server
     const coinMap = new Map(state.coins.map((c) => [c.id, c]));
     this.coins = this.coins.filter((c) => {
       const id = (c as Coin & { netId?: number }).netId;
-      return id == null || coinMap.has(id);
+      return id != null && coinMap.has(id);
     });
     for (const c of state.coins) {
-      if (!this.coins.some((x) => (x as Coin & { netId?: number }).netId === c.id)) {
-        const coin = new Coin(c.x, c.y);
+      let coin = this.coins.find((x) => (x as Coin & { netId?: number }).netId === c.id);
+      if (!coin) {
+        coin = new Coin(c.x, c.y);
         (coin as Coin & { netId?: number }).netId = c.id;
         this.coins.push(coin);
+      } else {
+        coin.x = c.x;
+        coin.y = c.y;
       }
     }
 
     const resMap = new Map(state.resources.map((r) => [r.id, r]));
     this.resources = this.resources.filter((r) => {
       const id = (r as Resource & { netId?: number }).netId;
-      return id == null || resMap.has(id);
+      return id != null && resMap.has(id);
     });
     for (const r of state.resources) {
       let ent = this.resources.find((x) => (x as Resource & { netId?: number }).netId === r.id);
@@ -1051,18 +1080,55 @@ export class PlayScene implements Scene {
       }
     }
 
-    // Rebuild houses from server so all clients share placements.
-    const houseSnaps = state.houses;
-    if (houseSnaps.length || this.net) {
-      const next: House[] = [];
-      for (const h of houseSnaps) {
-        const def = BUILDINGS.find((b) => b.id === h.building);
-        if (!def) continue;
-        const owner = this.agents.find((a) => a.netId === h.ownerId);
-        next.push(new House(h.x, h.y, def, owner?.id ?? 0));
+    // Reuse houses by netId so produce timers / visuals survive snapshots.
+    const nextHouses: House[] = [];
+    for (const h of state.houses) {
+      const def = BUILDINGS.find((b) => b.id === h.building);
+      if (!def) continue;
+      const owner = this.agents.find((a) => a.netId === h.ownerId);
+      let house = this.houses.find((x) => x.netId === h.id);
+      if (!house || house.def.id !== def.id) {
+        house = new House(h.x, h.y, def, owner?.id ?? 0);
+        house.netId = h.id;
+      } else {
+        house.x = h.x;
+        house.y = h.y;
       }
-      this.houses = next;
+      if (h.produceProgress != null) house.syncProduceProgress(h.produceProgress);
+      nextHouses.push(house);
     }
+    this.houses = nextHouses;
+
+    // Troops: server is source of truth for existence/orders; clients simulate movement.
+    const nextTroops: Troop[] = [];
+    for (const t of state.troops) {
+      const def = TROOP_BY_ID[t.troop];
+      if (!def) continue;
+      const owner = this.agents.find((a) => a.netId === t.ownerId);
+      let troop = this.troops.find((x) => x.netId === t.id);
+      if (!troop) {
+        troop = new Troop(t.x, t.y, def, this.map, nextTroops.length, owner?.id ?? 0);
+        troop.netId = t.id;
+      }
+      troop.order = t.order;
+      nextTroops.push(troop);
+    }
+    this.troops = nextTroops;
+
+    const nextChests: Chest[] = [];
+    for (const c of state.chests ?? []) {
+      let chest = this.chests.find((x) => x.netId === c.id);
+      if (!chest) {
+        chest = new Chest(c.x, c.y);
+        chest.netId = c.id;
+      } else {
+        chest.x = c.x;
+        chest.y = c.y;
+      }
+      chest.opened = c.opened;
+      nextChests.push(chest);
+    }
+    if (state.chests) this.chests = nextChests;
   }
 
   private completeQuests(agent: Agent, done: QuestDef[]) {
@@ -1132,6 +1198,11 @@ export class PlayScene implements Scene {
   }
 
   private updateBuildings(dt: number) {
+    // Online: server owns production + inventory; progress comes from snapshots.
+    if (this.net) {
+      this.pullToBuildings(dt);
+      return;
+    }
     for (const h of this.houses) {
       const produced = h.update(dt);
       if (!produced) continue;
@@ -1229,17 +1300,35 @@ export class PlayScene implements Scene {
       .sort((a, b) => b.dist - a.dist);
 
     const placed: { x: number; y: number }[] = [];
-    for (const { i: island } of farIslands) {
-      if (placed.length >= CHEST_COUNT) break;
-      const found = this.map.randomWalkablePoint(size, (x, y) => {
+    const tryPlace = (island: number, minSpread: number) =>
+      this.map.randomWalkablePoint(size, (x, y) => {
         if (this.map.islandAt(x + size / 2, y + size / 2) !== island) return false;
         if (!this.isFree(x, y, size)) return false;
         for (const p of placed) {
-          if (Math.hypot(x - p.x, y - p.y) < CHEST_MIN_SPREAD) return false;
+          if (Math.hypot(x - p.x, y - p.y) < minSpread) return false;
         }
         return true;
       });
+
+    for (const { i: island } of farIslands) {
+      if (placed.length >= CHEST_COUNT) break;
+      const found = tryPlace(island, CHEST_MIN_SPREAD) ?? tryPlace(island, CHEST_MIN_SPREAD * 0.4);
       if (!found) continue;
+      placed.push(found);
+      this.chests.push(new Chest(found.x, found.y));
+    }
+
+    // Guarantee three chests even if island filters fail.
+    while (placed.length < CHEST_COUNT) {
+      const found = this.map.randomWalkablePoint(size, (x, y) => {
+        if (this.map.islandAt(x + size / 2, y + size / 2) === 0) return false;
+        if (!this.isFree(x, y, size)) return false;
+        for (const p of placed) {
+          if (Math.hypot(x - p.x, y - p.y) < 400) return false;
+        }
+        return true;
+      });
+      if (!found) break;
       placed.push(found);
       this.chests.push(new Chest(found.x, found.y));
     }
@@ -1247,6 +1336,11 @@ export class PlayScene implements Scene {
 
   private openChest(chest: Chest) {
     if (chest.opened) return;
+    if (this.net && chest.netId != null) {
+      this.net.send({ type: 'action', action: { kind: 'openChest', chestId: chest.netId } });
+      this.popups.add('Treasure!', '#e8c36a', chest.x + chest.w / 2, chest.y - 8);
+      return;
+    }
     chest.opened = true;
     const cx = chest.x + chest.w / 2;
     const cy = chest.y + chest.h / 2;
@@ -1393,7 +1487,10 @@ export class PlayScene implements Scene {
     agent.player.feed(food.restore);
     const def = RESOURCE_BY_ID[food.id];
     this.popups.add(`Ate ${def.name}`, def.color, px, py);
-    if (this.net) this.net.send({ type: 'action', action: { kind: 'eat', id: food.id } });
+    if (this.net) {
+      this.eatExpect = { id: food.id, count: agent.inventory[food.id], restore: food.restore };
+      this.net.send({ type: 'action', action: { kind: 'eat', id: food.id } });
+    }
   }
 
   private interactHint(agent: Agent, house: House) {
@@ -1555,6 +1652,15 @@ export class PlayScene implements Scene {
     const hire = () => {
       const def = pool[agent.selectedTroop];
       if (!canAffordTroop(agent.inventory, def)) return;
+      if (this.net) {
+        if (recruitHut.netId == null) return;
+        this.net.send({
+          type: 'action',
+          action: { kind: 'hire', troop: def.id, hutId: recruitHut.netId },
+        });
+        this.popups.add(`Hiring ${def.name}…`, def.accent, recruitHut.x + recruitHut.w / 2, recruitHut.y);
+        return;
+      }
       spendTroop(agent.inventory, def);
       const angle = Math.random() * Math.PI * 2;
       const dist = 28 + Math.random() * 12;
@@ -1862,6 +1968,9 @@ export class PlayScene implements Scene {
   ) {
     const cx = Math.round(agent.camera.x);
     const cy = Math.round(agent.camera.y);
+    const z = this.worldZoom(vw);
+    const worldW = vw / z;
+    const worldH = vh / z;
 
     ctx.save();
     ctx.beginPath();
@@ -1869,7 +1978,9 @@ export class PlayScene implements Scene {
     ctx.clip();
     ctx.translate(ox, oy);
 
-    this.map.draw(ctx, cx, cy, vw, vh);
+    ctx.save();
+    ctx.scale(z, z);
+    this.map.draw(ctx, cx, cy, worldW, worldH);
 
     ctx.save();
     ctx.translate(-cx, -cy);
@@ -1889,6 +2000,7 @@ export class PlayScene implements Scene {
     if (agent.building && this.menuOwner === agent) this.renderPreview(ctx, agent);
     this.popups.render(ctx);
     ctx.restore();
+    ctx.restore();
 
     this.dayNight.render(ctx, vw, vh);
 
@@ -1899,7 +2011,7 @@ export class PlayScene implements Scene {
     drawMinimap(ctx, this.map, agent.camera, agent.player, this.coins, this.houses, {
       originX: 0,
       viewW: vw,
-      width: Math.min(CONFIG.minimap.width, vw - 24),
+      width: this.minimapWidth(vw),
       players,
       villages: this.villages,
       chests: this.chests.filter((c) => !c.opened),
@@ -1971,7 +2083,7 @@ export class PlayScene implements Scene {
   }
 
   private renderIslandInfo(ctx: CanvasRenderingContext2D, agent: Agent, vw: number) {
-    const minimapW = Math.min(CONFIG.minimap.width, vw - 24);
+    const minimapW = this.minimapWidth(vw);
     const minimapH = (this.map.height / this.map.width) * minimapW;
     const name = agent.currentIsland >= 0 ? this.map.islands[agent.currentIsland].theme.name : 'Open sea';
     drawText(

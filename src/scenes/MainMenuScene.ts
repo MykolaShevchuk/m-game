@@ -106,5 +106,8 @@ export class MainMenuScene implements Scene {
       14,
       'center',
     );
+    ctx.globalAlpha = 0.35;
+    drawText(ctx, 'build 19', w - 12, h - 14, 11, 'right');
+    ctx.globalAlpha = 1;
   }
 }

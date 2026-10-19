@@ -203,7 +203,7 @@ export class WorldMap {
     const { x: cx, y: cy, r } = this.islands[0];
     for (let i = 0; i < 4000; i++) {
       const radius = (i / 4000) * r;
-      const angle = Math.random() * Math.PI * 2;
+      const angle = this.rand() * Math.PI * 2;
       const x = cx + Math.cos(angle) * radius;
       const y = cy + Math.sin(angle) * radius;
       if (this.isAreaWalkable({ x, y, w: size, h: size })) return { x, y };
