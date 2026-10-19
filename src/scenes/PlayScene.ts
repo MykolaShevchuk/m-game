@@ -320,7 +320,7 @@ export class PlayScene implements Scene {
   /** Inventory icon scale — compact on phones so it doesn't cover the pad. */
   private inventoryScale(vw: number) {
     if (this.game.input.touchPreferred || vw < 700) {
-      return this.splitScreen ? 0.55 : 0.62;
+      return this.splitScreen ? 0.4 : 0.45;
     }
     return this.splitScreen ? 0.85 : 1;
   }
