@@ -294,13 +294,14 @@ export class PlayScene implements Scene {
   }
 
   /**
-   * Portrait / narrow phones: stack screens top/bottom so each half is full width
-   * and can fit stick (left) + buttons (right). Landscape: side-by-side.
+   * Stack top/bottom when portrait, or when a side-by-side half would be too
+   * narrow for stick+buttons. iPad landscape stays side-by-side (each half ~500–600px).
    */
   private splitStacked(): boolean {
     if (!this.splitScreen) return false;
     const { width: w, height: h } = this.game;
-    return h >= w || w / 2 < 480;
+    const minHalfForSideBySide = 420;
+    return h > w || w / 2 < minHalfForSideBySide;
   }
 
   private agentViewport(agentId: number): { ox: number; oy: number; vw: number; vh: number } {
@@ -341,6 +342,7 @@ export class PlayScene implements Scene {
         originX: vp.ox,
         originY: vp.oy,
         viewH: vp.vh,
+        canvasW: this.game.width,
         slot,
         confirm,
         showPause: i === 0,

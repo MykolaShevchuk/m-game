@@ -1,10 +1,13 @@
+import { CHEST_SIZE } from '@/chests';
 import { drawChest } from '@/ui/drawChest';
 import { Entity } from './Entity';
 
-export const CHEST_SIZE = 30;
+export { CHEST_SIZE };
 
 export class Chest extends Entity {
   opened = false;
+  /** Server id when playing online. */
+  netId?: number;
 
   constructor(x: number, y: number) {
     super(x, y, CHEST_SIZE, CHEST_SIZE * 0.85);

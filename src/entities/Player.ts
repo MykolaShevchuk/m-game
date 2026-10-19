@@ -22,6 +22,8 @@ export class Player extends Entity {
   blinkTimer = 0;
   blinkIframes = 0.25;
   shieldBash = false;
+  /** Cooldown so Shield Bash can't multi-hit every frame. */
+  shieldBashCd = 0;
   regenEvery = 0;
   fireballEvery = 0;
   fireballTimer = 0;
@@ -148,6 +150,7 @@ export class Player extends Entity {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.swingT = Math.max(0, this.swingT - dt);
     this.stun = Math.max(0, this.stun - dt);
+    this.shieldBashCd = Math.max(0, this.shieldBashCd - dt);
     this.hunger = Math.max(0, this.hunger - dt / CONFIG.hunger.duration);
     if (this.stun > 0) {
       this.walkTime = 0;

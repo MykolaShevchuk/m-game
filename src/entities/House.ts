@@ -6,6 +6,8 @@ import { Entity } from './Entity';
 export class House extends Entity {
   /** Seconds elapsed toward the next production tick. */
   private produceTimer = 0;
+  /** Server id when playing online. */
+  netId?: number;
 
   constructor(
     x: number,

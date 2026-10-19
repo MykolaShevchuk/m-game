@@ -1,3 +1,10 @@
+:root {
+  --sat-top: env(safe-area-inset-top, 0px);
+  --sat-right: env(safe-area-inset-right, 0px);
+  --sat-bottom: env(safe-area-inset-bottom, 0px);
+  --sat-left: env(safe-area-inset-left, 0px);
+}
+
 html,
 body {
   margin: 0;

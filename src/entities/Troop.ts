@@ -13,6 +13,8 @@ export type TroopOrder = 'follow' | 'garrison';
 export class Troop extends Entity {
   attackCd = 0;
   facing = { x: 1, y: 0 };
+  /** Server id when playing online. */
+  netId?: number;
   private faceFlip = 1;
   private walkTime = 0;
   private offsetAngle: number;
@@ -96,7 +98,7 @@ export class Troop extends Entity {
 
   private setFacing(x: number, y: number) {
     if (Math.abs(x) > 0.05) this.faceFlip = x < 0 ? -1 : 1;
-    this.facing = { x: this.faceFlip, y };
+    this.facing = { x: this.faceFlip, y: Math.abs(y) < 1e-4 ? 0 : y };
   }
 
   update() {}

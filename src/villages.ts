@@ -141,6 +141,26 @@ export function canAffordOffer(inventory: Inventory, offer: TradeOffer) {
   return inventory[offer.giveId] >= offer.giveN && offer.stock > 0;
 }
 
+/** True when the exact give/get amounts match a published village deal. */
+export function isKnownTradeDeal(
+  giveId: ResourceId,
+  giveN: number,
+  getId: ResourceId,
+  getN: number,
+) {
+  const match = (deals: Deal[]) =>
+    deals.some(([a, an, b, bn]) => a === giveId && an === giveN && b === getId && bn === getN);
+  if (match(FALLBACK)) return true;
+  for (const deals of Object.values(DEALS)) {
+    if (match(deals)) return true;
+  }
+  return false;
+}
+
+export function tradeDealKey(giveId: ResourceId, giveN: number, getId: ResourceId, getN: number) {
+  return `${giveId}:${giveN}:${getId}:${getN}`;
+}
+
 export function applyOffer(inventory: Inventory, offer: TradeOffer) {
   inventory[offer.giveId] -= offer.giveN;
   inventory[offer.getId] += offer.getN;

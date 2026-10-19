@@ -152,11 +152,13 @@ export class WorldMap {
   }
 
   randomWalkablePoint(size: number, accept: (x: number, y: number) => boolean = () => true) {
-    for (let i = 0; i < 2000; i++) {
-      const x = Math.random() * (this.width - size);
-      const y = Math.random() * (this.height - size);
-      const i = this.index(x + size / 2, y + size / 2);
-      if (this.reachable[i] && this.isAreaWalkable({ x, y, w: size, h: size }) && accept(x, y)) return { x, y };
+    for (let n = 0; n < 2000; n++) {
+      const x = this.rand() * (this.width - size);
+      const y = this.rand() * (this.height - size);
+      const idx = this.index(x + size / 2, y + size / 2);
+      if (idx >= 0 && this.reachable[idx] && this.isAreaWalkable({ x, y, w: size, h: size }) && accept(x, y)) {
+        return { x, y };
+      }
     }
     return null;
   }

@@ -41,48 +41,79 @@ export interface TouchLayoutOpts {
   originY?: number;
   /** Height of this player's screen (defaults to full canvas height). */
   viewH?: number;
+  /** Full canvas width — used for safe-area on the right edge. */
+  canvasW?: number;
   showPause?: boolean;
+}
+
+/** Extra inset for iPad/iPhone home indicator & rounded corners. */
+function safeInset() {
+  if (typeof getComputedStyle === 'undefined' || typeof document === 'undefined') {
+    return { left: 0, right: 0, bottom: 12, top: 0 };
+  }
+  const s = getComputedStyle(document.documentElement);
+  const n = (v: string) => Math.max(0, parseFloat(v) || 0);
+  return {
+    left: n(s.getPropertyValue('--sat-left')),
+    right: n(s.getPropertyValue('--sat-right')),
+    top: n(s.getPropertyValue('--sat-top')),
+    bottom: Math.max(12, n(s.getPropertyValue('--sat-bottom'))),
+  };
 }
 
 /**
  * Joystick on the left of this player's screen, action buttons on the right.
- * Pass origin + view size for split-screen so each half gets its own pad.
+ * Sized for phones and iPads (larger pads when the half is tablet-wide).
  */
 export function touchLayout(viewW: number, canvasH: number, opts: TouchLayoutOpts = {}): TouchLayout {
   const originX = opts.originX ?? 0;
   const originY = opts.originY ?? 0;
   const viewH = opts.viewH ?? canvasH;
+  const canvasW = opts.canvasW ?? originX + viewW;
   const slot = opts.slot ?? 0;
   const showPause = opts.showPause ?? true;
-  const narrow = viewW < 520;
-  const short = viewH < 420;
-  const safe = Math.min(14, Math.round(Math.min(viewW, viewH) * 0.03));
-  const stickR = Math.min(
-    short ? 40 : narrow ? 48 : 60,
-    Math.max(30, Math.round(Math.min(viewW, viewH) * (short ? 0.14 : narrow ? 0.15 : 0.12))),
-  );
-  const btnR = Math.min(
-    short ? 22 : narrow ? 26 : 34,
-    Math.max(18, Math.round(Math.min(viewW, viewH) * (short ? 0.07 : narrow ? 0.08 : 0.065))),
-  );
-  const gap = btnR * 0.22;
+  const inset = safeInset();
+
+  // Phone half / stacked phone ≈ narrow; iPad landscape half ≈ tablet.
+  const tablet = viewW >= 480 && viewH >= 500;
+  const narrow = viewW < 480;
+  const short = viewH < 400;
+
+  const edgeL = (originX < 4 ? inset.left : 0) + (narrow ? 10 : 16);
+  const edgeR = (originX + viewW >= canvasW - 4 ? inset.right : 0) + (narrow ? 10 : 16);
+  const edgeB = (originY + viewH >= canvasH - 2 ? inset.bottom : 0) + (short ? 8 : 14);
+  const edgeT = (originY < 2 ? inset.top : 0) + 8;
+
+  const stickR = tablet
+    ? Math.min(72, Math.max(52, Math.round(Math.min(viewW, viewH) * 0.09)))
+    : Math.min(
+        short ? 40 : narrow ? 48 : 58,
+        Math.max(30, Math.round(Math.min(viewW, viewH) * (short ? 0.14 : narrow ? 0.15 : 0.11))),
+      );
+  const btnR = tablet
+    ? Math.min(40, Math.max(28, Math.round(Math.min(viewW, viewH) * 0.048)))
+    : Math.min(
+        short ? 22 : narrow ? 26 : 32,
+        Math.max(18, Math.round(Math.min(viewW, viewH) * (short ? 0.07 : narrow ? 0.08 : 0.06))),
+      );
+  const gap = btnR * 0.24;
 
   const stick: StickZone = {
     kind: 'stick',
-    cx: originX + safe + stickR + 6,
-    cy: originY + viewH - safe - stickR - 8,
+    cx: originX + edgeL + stickR + 4,
+    cy: originY + viewH - edgeB - stickR - 4,
     radius: stickR,
     hitX: originX,
-    hitY: originY + viewH * 0.35,
+    hitY: originY + viewH * 0.32,
     hitW: viewW * 0.48,
-    hitH: viewH * 0.65,
+    hitH: viewH * 0.68,
   };
 
-  const clusterX = originX + viewW - safe - btnR * (narrow ? 2.0 : 2.35);
-  const clusterY = originY + viewH - safe - btnR * (short ? 2.0 : narrow ? 2.15 : 2.5);
+  const clusterX = originX + viewW - edgeR - btnR * (narrow ? 2.0 : tablet ? 2.5 : 2.3);
+  const clusterY = originY + viewH - edgeB - btnR * (short ? 2.0 : tablet ? 2.6 : narrow ? 2.15 : 2.45);
 
   const buttons: ButtonZone[] = [
-    { kind: 'button', id: 'interact', x: clusterX, y: clusterY, r: btnR + (narrow ? 2 : 4), label: 'USE' },
+    { kind: 'button', id: 'interact', x: clusterX, y: clusterY, r: btnR + (tablet ? 6 : narrow ? 2 : 4), label: 'USE' },
     { kind: 'button', id: 'build', x: clusterX - btnR * 2.05 - gap, y: clusterY, r: btnR, label: 'BUILD' },
     { kind: 'button', id: 'blink', x: clusterX, y: clusterY - btnR * 2.05 - gap, r: btnR, label: 'DASH' },
     { kind: 'button', id: 'eat', x: clusterX + btnR * 2.05 + gap, y: clusterY, r: btnR, label: 'EAT' },
@@ -92,9 +123,9 @@ export function touchLayout(viewW: number, canvasH: number, opts: TouchLayoutOpt
     buttons.push({
       kind: 'button',
       id: 'pause',
-      x: originX + viewW - safe - 18,
-      y: originY + safe + 18,
-      r: 18,
+      x: originX + viewW - edgeR - 20,
+      y: originY + edgeT + 18,
+      r: tablet ? 22 : 18,
       label: '||',
     });
   }
@@ -131,7 +162,7 @@ export function drawTouchControls(
   const baseX = origin?.x ?? s.cx;
   const baseY = origin?.y ?? s.cy;
   const accent = layout.slot === 0 ? '#81c784' : '#64b5f6';
-  const dockH = Math.min(140, Math.max(100, s.radius * 2.5));
+  const dockH = Math.min(150, Math.max(100, s.radius * 2.4));
 
   ctx.save();
 
@@ -142,14 +173,13 @@ export function drawTouchControls(
   ctx.fillStyle = grad;
   ctx.fillRect(layout.originX, s.cy - dockH * 0.55, layout.viewW, dockH * 0.55 + s.radius + 20);
 
-  // Player label banner so each half is obvious.
-  ctx.globalAlpha = 0.75;
+  ctx.globalAlpha = 0.8;
   ctx.fillStyle = accent;
   ctx.beginPath();
-  ctx.roundRect(layout.originX + 8, layout.originY + 8, 44, 22, 6);
+  ctx.roundRect(layout.originX + 10, layout.originY + 10, 48, 24, 7);
   ctx.fill();
   ctx.globalAlpha = 1;
-  drawText(ctx, layout.slot === 0 ? 'P1' : 'P2', layout.originX + 30, layout.originY + 19, 13, 'center');
+  drawText(ctx, layout.slot === 0 ? 'P1' : 'P2', layout.originX + 34, layout.originY + 22, 14, 'center');
 
   ctx.globalAlpha = origin ? 0.6 : 0.48;
   ctx.fillStyle = '#0a0a0a';
@@ -189,7 +219,7 @@ export function drawTouchControls(
     ctx.strokeStyle = main ? accent : '#fff';
     ctx.lineWidth = main ? 3 : 2;
     ctx.stroke();
-    const size = b.id === 'pause' ? 12 : main ? 12 : 10;
+    const size = b.id === 'pause' ? 12 : main ? 13 : 11;
     drawText(ctx, b.label, b.x, b.y + 1, size, 'center');
   }
   ctx.restore();
