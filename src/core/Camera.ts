@@ -12,8 +12,8 @@ export class Camera {
   ) {}
 
   resize(viewW: number, viewH: number) {
-    this.viewW = viewW;
-    this.viewH = viewH;
+    this.viewW = Math.min(viewW, this.worldW);
+    this.viewH = Math.min(viewH, this.worldH);
     this.x = clamp(this.x, 0, Math.max(0, this.worldW - this.viewW));
     this.y = clamp(this.y, 0, Math.max(0, this.worldH - this.viewH));
   }

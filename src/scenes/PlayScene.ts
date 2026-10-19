@@ -307,27 +307,33 @@ export class PlayScene implements Scene {
   }
 
   /**
-   * Screen pixels per world pixel. Compact viewports (phones / small windows)
-   * zoom out so ~1400×800 world units fit; large desktops stay 1:1.
-   * Uses size, not touch detection — iPad “desktop site” still zooms out.
+   * How much world the viewport should show, and the scale to draw it.
+   * Phones aim for ~2000 world-units wide (capped to the map) so terrain
+   * isn't enormous; desktops stay near 1:1 with the design resolution.
    */
-  private worldZoom(viewW: number, viewH: number) {
-    const compact = Math.min(viewW, viewH) < 720 || viewW < 1000;
-    const targetW = compact ? 1600 : CONFIG.width;
-    const targetH = compact ? 900 : CONFIG.height;
-    return Math.min(1, viewW / targetW, viewH / targetH);
+  private worldView(viewW: number, viewH: number) {
+    const targetW = viewW < 1100 ? 2000 : CONFIG.width;
+    let z = Math.min(1, viewW / targetW);
+    // Never ask the camera for more than the map (portrait phones).
+    if (viewH / z > CONFIG.world.height) z = viewH / CONFIG.world.height;
+    if (viewW / z > CONFIG.world.width) z = viewW / CONFIG.world.width;
+    return {
+      zoom: z,
+      worldW: viewW / z,
+      worldH: viewH / z,
+    };
   }
 
   private minimapWidth(vw: number) {
-    if (vw < 700) return Math.min(96, Math.round(vw * 0.22));
+    if (vw < 700) return Math.min(80, Math.round(vw * 0.2));
     return Math.min(CONFIG.minimap.width, vw - 24);
   }
 
   private syncCameras() {
     for (const a of this.agents) {
       const vp = this.agentViewport(a.id);
-      const z = this.worldZoom(vp.vw, vp.vh);
-      a.camera.resize(vp.vw / z, vp.vh / z);
+      const { worldW, worldH } = this.worldView(vp.vw, vp.vh);
+      a.camera.resize(worldW, worldH);
     }
   }
 
@@ -1979,9 +1985,7 @@ export class PlayScene implements Scene {
   ) {
     const cx = Math.round(agent.camera.x);
     const cy = Math.round(agent.camera.y);
-    const z = this.worldZoom(vw, vh);
-    const worldW = vw / z;
-    const worldH = vh / z;
+    const { zoom: z, worldW, worldH } = this.worldView(vw, vh);
 
     ctx.save();
     ctx.beginPath();
