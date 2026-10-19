@@ -308,12 +308,13 @@ export class PlayScene implements Scene {
 
   /**
    * How much world the viewport should show, and the scale to draw it.
-   * Phones aim for ~2000 world-units wide (capped to the map) so terrain
-   * isn't enormous; desktops stay near 1:1 with the design resolution.
+   * Phones pull back (~2000wu). Desktop zooms in (~780wu) so the scene
+   * fills a large monitor instead of showing a tiny character.
    */
   private worldView(viewW: number, viewH: number) {
-    const targetW = viewW < 1100 ? 2000 : CONFIG.width;
-    let z = Math.min(1, viewW / targetW);
+    const desktop = !this.game.input.touchPreferred;
+    const targetW = desktop ? 780 : viewW < 1100 ? 2000 : CONFIG.width;
+    let z = viewW / targetW;
     // Never ask the camera for more than the map (portrait phones).
     if (viewH / z > CONFIG.world.height) z = viewH / CONFIG.world.height;
     if (viewW / z > CONFIG.world.width) z = viewW / CONFIG.world.width;
