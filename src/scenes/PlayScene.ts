@@ -12,7 +12,7 @@ import {
 import { CHARACTERS } from '@/characters';
 import { CONFIG } from '@/config';
 import { Camera } from '@/core/Camera';
-import type { Game } from '@/core/Game';
+import { isLandscape, type Game } from '@/core/Game';
 import type { PlayerControls, PlayerSlot, TouchPadHandler } from '@/core/Input';
 import { overlaps, type Rect } from '@/core/math';
 import { loadTutorialDone, saveTutorialDone } from '@/core/storage';
@@ -262,8 +262,8 @@ export class PlayScene implements Scene {
   }
 
   enter() {
-    // Always show on-screen pads in play (esp. local co-op); force on desktop too.
-    this.game.input.setTouchUi(true, { force: true });
+    // Touch pads only on real touch devices — keyboard on desktop.
+    this.game.input.setTouchUi(true);
     this.syncTouchHandlers();
     if (this.dayNight.pvpActive) void this.pvpMusic.play();
     else void this.prePvpMusic.play();
@@ -285,11 +285,12 @@ export class PlayScene implements Scene {
   }
 
   /**
-   * Side-by-side whenever each half is wide enough for stick+buttons (iPad
-   * portrait ~410px halves still work). Only stack on narrow phones.
+   * iPhone on its side: always P1 | P2.
+   * Portrait phones stack; iPad portrait can stay side-by-side.
    */
   private splitStacked(): boolean {
     if (!this.splitScreen) return false;
+    if (isLandscape() || this.game.width >= this.game.height) return false;
     return this.game.width / 2 < 380;
   }
 
@@ -306,27 +307,37 @@ export class PlayScene implements Scene {
   }
 
   /**
-   * Screen pixels per world pixel. On phones (narrower than the design width)
-   * this drops below 1 so the camera zooms out to roughly desktop FOV.
+   * Screen pixels per world pixel. Compact viewports (phones / small windows)
+   * zoom out so ~1400×800 world units fit; large desktops stay 1:1.
+   * Uses size, not touch detection — iPad “desktop site” still zooms out.
    */
-  private worldZoom(viewW: number) {
-    return Math.min(1, viewW / CONFIG.width);
+  private worldZoom(viewW: number, viewH: number) {
+    const compact = Math.min(viewW, viewH) < 720 || viewW < 1000;
+    const targetW = compact ? 1600 : CONFIG.width;
+    const targetH = compact ? 900 : CONFIG.height;
+    return Math.min(1, viewW / targetW, viewH / targetH);
   }
 
   private minimapWidth(vw: number) {
-    return Math.min(CONFIG.minimap.width, Math.round(vw * 0.34), Math.max(96, vw - 24));
+    if (vw < 700) return Math.min(96, Math.round(vw * 0.22));
+    return Math.min(CONFIG.minimap.width, vw - 24);
   }
 
   private syncCameras() {
     for (const a of this.agents) {
       const vp = this.agentViewport(a.id);
-      const z = this.worldZoom(vp.vw);
+      const z = this.worldZoom(vp.vw, vp.vh);
       a.camera.resize(vp.vw / z, vp.vh / z);
     }
   }
 
   private syncTouchHandlers() {
-    this.game.input.setTouchUi(true, { force: true });
+    this.game.input.setTouchUi(true);
+    if (!this.game.input.showTouchUi) {
+      this.touchLayouts = [];
+      this.game.input.setTouchPads([]);
+      return;
+    }
     const dual = this.splitScreen && this.agents.length >= 2;
     const padCount = dual ? 2 : 1;
     const layouts: TouchLayout[] = [];
@@ -1968,7 +1979,7 @@ export class PlayScene implements Scene {
   ) {
     const cx = Math.round(agent.camera.x);
     const cy = Math.round(agent.camera.y);
-    const z = this.worldZoom(vw);
+    const z = this.worldZoom(vw, vh);
     const worldW = vw / z;
     const worldH = vh / z;
 

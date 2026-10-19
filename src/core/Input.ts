@@ -111,16 +111,10 @@ export class Input {
 
   /**
    * Enable/disable on-screen sticks & buttons (PlayScene).
-   * Pass `force: true` so pads show even on desktop (needed for local split-screen).
+   * Only shows when the device reports touch (`touchPreferred`).
    */
-  setTouchUi(enabled: boolean, opts: { force?: boolean } = {}) {
-    if (!enabled) {
-      this.touchUi = false;
-      this.pads = [];
-      this.clearAllSticks();
-      return;
-    }
-    this.touchUi = this.touchPreferred || !!opts.force;
+  setTouchUi(enabled: boolean) {
+    this.touchUi = enabled && this.touchPreferred;
     if (!this.touchUi) {
       this.pads = [];
       this.clearAllSticks();
